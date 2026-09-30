@@ -21,6 +21,8 @@
     "uptime":      "<uptime-tailnet-ip>",
     "web":         "<web-tailnet-ip>",
     "sandbox":     "<sandbox-tailnet-ip>",
+    "pve2":        "<pve2-tailnet-ip>",
+    "pve3":        "<pve3-tailnet-ip>",
 
     // Personal devices
     "macbook":     "<macbook-tailnet-ip>",
@@ -60,6 +62,15 @@
       "action": "accept",
       "src":    ["vaultwarden", "pihole", "uptime"],
       "dst":    ["wazuh:1514,1515"],
+    },
+
+    // === Cluster nodes pve2/pve3: DNS via Pi-hole and their Wazuh agents. ===
+    // Corosync and migrations run over the private switch VLAN (10.10.10.0/24),
+    // not the tailnet, so they need nothing else here. No SSH out.
+    {
+      "action": "accept",
+      "src":    ["pve2", "pve3"],
+      "dst":    ["pihole:53", "wazuh:1514,1515"],
     },
 
     // === Nextcloud has no native agent (musl); it forwards syslog instead. ===
@@ -117,6 +128,16 @@
       "src":    "uptime",
       "accept": ["vaultwarden:443", "proxmox:8006"],
       "deny":   ["vaultwarden:22", "proxmox:22", "nextcloud:22"],
+    },
+    {
+      // Cluster nodes get DNS and Wazuh, never a shell elsewhere.
+      "src":    "pve2",
+      "accept": ["pihole:53", "wazuh:1514"],
+      "deny":   ["vaultwarden:22", "vaultwarden:443", "proxmox:22", "pve3:22"],
+    },
+    {
+      "src":    "macbook",
+      "accept": ["pve2:22", "pve3:22", "pve2:8006", "pve3:8006"],
     },
     {
       "src":    "unknown-device",
