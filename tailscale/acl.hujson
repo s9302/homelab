@@ -1,0 +1,126 @@
+// Tailscale ACL policy for owner's tailnet.
+// Paste into: login.tailscale.com/admin/acls
+//
+// Tailscale ACLs are DEFAULT DENY: once "acls" is non-empty, only what is listed
+// here is permitted. Enforced by Tailscale on both ends, independently of each
+// host's iptables rules.
+//
+// Intent: SSH (port 22) is reachable ONLY from Spencer's own devices and from the
+// Proxmox host. Every server gets exactly the service ports it needs to do its job
+// and nothing more. In particular `web` - the only internet-facing machine - can
+// reach one destination on the whole tailnet.
+
+{
+  "hosts": {
+    // Infrastructure
+    "proxmox":     "<proxmox-tailnet-ip>",
+    "vaultwarden": "<vaultwarden-tailnet-ip>",
+    "nextcloud":   "<nextcloud-tailnet-ip>",
+    "pihole":      "<pihole-tailnet-ip>",
+    "wazuh":       "<wazuh-tailnet-ip>",
+    "uptime":      "<uptime-tailnet-ip>",
+    "web":         "<web-tailnet-ip>",
+    "sandbox":     "<sandbox-tailnet-ip>",
+
+    // Personal devices
+    "macbook":     "<macbook-tailnet-ip>",
+    "iphone":      "<iphone-tailnet-ip>",
+    "desktop":     "<desktop-tailnet-ip>",
+    "unknown-device":    "<unknown-device-tailnet-ip>",
+  },
+
+  "acls": [
+    // === Spencer's own devices: full access, including SSH. ===
+    {
+      "action": "accept",
+      "src":    ["macbook", "iphone", "desktop"],
+      "dst":    ["*:*"],
+    },
+
+    // === Proxmox: allowed to SSH anywhere, as the in-lab jump host. ===
+    // Also needs its own Wazuh agent to reach the manager.
+    {
+      "action": "accept",
+      "src":    ["proxmox"],
+      "dst":    ["*:22", "wazuh:1514,1515"],
+    },
+
+    // === The internet-facing web container. ===
+    // Its only tailnet dependency is shipping logs to Wazuh; the Cloudflare tunnel
+    // egresses straight to the internet and never touches the tailnet.
+    // No SSH out. No access to Vaultwarden, Nextcloud, Pi-hole or the host.
+    {
+      "action": "accept",
+      "src":    ["web"],
+      "dst":    ["wazuh:1514,1515"],
+    },
+
+    // === Wazuh agents on the remaining hosts. No SSH. ===
+    {
+      "action": "accept",
+      "src":    ["vaultwarden", "pihole", "uptime"],
+      "dst":    ["wazuh:1514,1515"],
+    },
+
+    // === Nextcloud has no native agent (musl); it forwards syslog instead. ===
+    {
+      "action": "accept",
+      "src":    ["nextcloud"],
+      "dst":    ["wazuh:514"],
+    },
+
+    // === Uptime Kuma probes exactly what it monitors - service ports only. ===
+    {
+      "action": "accept",
+      "src":    ["uptime"],
+      "dst":    [
+        "vaultwarden:443",
+        "nextcloud:443",
+        "proxmox:8006",
+        "web:80",
+        "wazuh:1514",
+        "pihole:53",
+      ],
+    },
+
+    // === Claude Code management sandbox. ===
+    // DELETE THIS BLOCK to enforce "only my devices and proxmox can SSH" strictly.
+    // Consequence: Claude can no longer reach any host to administer the lab.
+    {
+      "action": "accept",
+      "src":    ["sandbox"],
+      "dst":    ["*:*"],
+    },
+
+    // NOTE: `unknown-device` is defined above but granted nothing, so it loses all
+    // access when this policy is saved. Add a block for it if that is wrong.
+  ],
+
+  // Guardrails: Tailscale runs these on save and rejects the policy if any fail.
+  "tests": [
+    {
+      "src":    "macbook",
+      "accept": ["vaultwarden:22", "proxmox:22", "vaultwarden:443", "proxmox:8006"],
+    },
+    {
+      "src":    "proxmox",
+      "accept": ["vaultwarden:22", "web:22", "nextcloud:22"],
+    },
+    {
+      // The whole point: the internet-facing box is contained.
+      "src":    "web",
+      "accept": ["wazuh:1514"],
+      "deny":   ["vaultwarden:22", "vaultwarden:443", "proxmox:22", "proxmox:8006", "nextcloud:443"],
+    },
+    {
+      // Monitoring can probe, but never shell in.
+      "src":    "uptime",
+      "accept": ["vaultwarden:443", "proxmox:8006"],
+      "deny":   ["vaultwarden:22", "proxmox:22", "nextcloud:22"],
+    },
+    {
+      "src":    "unknown-device",
+      "deny":   ["vaultwarden:443", "vaultwarden:22", "proxmox:8006"],
+    },
+  ],
+}
