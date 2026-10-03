@@ -23,6 +23,7 @@
     "sandbox":     "<sandbox-tailnet-ip>",
     "pve2":        "<pve2-tailnet-ip>",
     "pve3":        "<pve3-tailnet-ip>",
+    "monitor":     "<monitor-tailnet-ip>",
 
     // Personal devices
     "macbook":     "<macbook-tailnet-ip>",
@@ -73,6 +74,14 @@
       "dst":    ["pihole:53", "wazuh:1514,1515"],
     },
 
+    // === Prometheus/Grafana (LXC 203 on pve2). Scrapes only; no SSH out. ===
+    // 8006 = Proxmox API for pve-exporter, 9100 = node_exporter on each node.
+    {
+      "action": "accept",
+      "src":    ["monitor"],
+      "dst":    ["proxmox:8006,9100", "pve2:9100", "pve3:9100", "pihole:53"],
+    },
+
     // === Nextcloud has no native agent (musl); it forwards syslog instead. ===
     {
       "action": "accept",
@@ -91,6 +100,7 @@
         "web:80",
         "wazuh:1514",
         "pihole:53",
+        "monitor:3000",
       ],
     },
 
@@ -138,6 +148,16 @@
     {
       "src":    "macbook",
       "accept": ["pve2:22", "pve3:22", "pve2:8006", "pve3:8006"],
+    },
+    {
+      // Monitoring box reads metrics, never gets a shell.
+      "src":    "monitor",
+      "accept": ["proxmox:8006", "proxmox:9100", "pve2:9100", "pve3:9100"],
+      "deny":   ["proxmox:22", "pve2:22", "vaultwarden:443", "vaultwarden:22"],
+    },
+    {
+      "src":    "macbook",
+      "accept": ["monitor:3000"],
     },
     {
       "src":    "unknown-device",
