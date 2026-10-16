@@ -24,6 +24,7 @@
     "pve2":        "<pve2-tailnet-ip>",
     "pve3":        "<pve3-tailnet-ip>",
     "monitor":     "<monitor-tailnet-ip>",
+    "game":        "<game-tailnet-ip>",
 
     // Personal devices
     "macbook":     "<macbook-tailnet-ip>",
@@ -55,6 +56,15 @@
     {
       "action": "accept",
       "src":    ["web"],
+      "dst":    ["wazuh:1514,1515"],
+    },
+
+    // === Wizard Academy game server (VM 104 on pve2). ===
+    // Internet-facing via its own Cloudflare tunnel, which egresses straight to
+    // the internet. Like `web`, its only tailnet dependency is its Wazuh agent.
+    {
+      "action": "accept",
+      "src":    ["game"],
       "dst":    ["wazuh:1514,1515"],
     },
 
@@ -158,6 +168,16 @@
     {
       "src":    "macbook",
       "accept": ["monitor:3000"],
+    },
+    {
+      // The game server is internet-facing too: contained like `web`.
+      "src":    "game",
+      "accept": ["wazuh:1514", "wazuh:1515"],
+      "deny":   ["vaultwarden:22", "vaultwarden:443", "proxmox:22", "proxmox:8006", "pve2:22", "pve2:8006", "web:22", "nextcloud:443", "pihole:53"],
+    },
+    {
+      "src":    "macbook",
+      "accept": ["game:8080", "game:22"],
     },
     {
       "src":    "unknown-device",
