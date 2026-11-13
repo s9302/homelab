@@ -28,6 +28,7 @@
     "romm":        "<romm-tailnet-ip>",
     "xemu":        "<xemu-tailnet-ip>",
     "langfuse":    "<langfuse-tailnet-ip>",
+    "auth":        "<auth-tailnet-ip>",
 
     // Personal devices
     "macbook":     "<macbook-tailnet-ip>",
@@ -74,7 +75,7 @@
     // === Wazuh agents on the remaining hosts. No SSH. ===
     {
       "action": "accept",
-      "src":    ["vaultwarden", "pihole", "uptime", "monitor", "romm", "xemu", "langfuse"],
+      "src":    ["vaultwarden", "pihole", "uptime", "monitor", "romm", "xemu", "langfuse", "auth"],
       "dst":    ["wazuh:1514,1515"],
     },
 
@@ -116,6 +117,16 @@
         "monitor:3000",
         "langfuse:443",
       ],
+    },
+
+    // === Authentik SSO (LXC 205 `auth`). ===
+    // Apps that log in through Authentik make server-to-server OIDC calls
+    // (token exchange, userinfo), so they need auth:443. Nothing else.
+    // `auth` itself only reaches Wazuh (block above). No SSH either way.
+    {
+      "action": "accept",
+      "src":    ["proxmox", "pve2", "pve3", "monitor", "romm", "langfuse", "nextcloud", "uptime"],
+      "dst":    ["auth:443"],
     },
 
     // === Claude Code management sandbox. ===
@@ -194,6 +205,31 @@
       "src":    "uptime",
       "accept": ["langfuse:443"],
       "deny":   ["langfuse:22", "langfuse:5432", "langfuse:3000"],
+    },
+    {
+      // The SSO server holds the keys to every app: it may only report to Wazuh.
+      "src":    "auth",
+      "accept": ["wazuh:1514", "wazuh:1515"],
+      "deny":   ["vaultwarden:22", "vaultwarden:443", "proxmox:22", "proxmox:8006", "pve2:22", "sandbox:22", "sandbox:8800", "nextcloud:443", "monitor:3000"],
+    },
+    {
+      // Apps reach Authentik's HTTPS only, never its shell or Postgres.
+      "src":    "monitor",
+      "accept": ["auth:443"],
+      "deny":   ["auth:22", "auth:5432", "auth:9000"],
+    },
+    {
+      "src":    "macbook",
+      "accept": ["auth:443", "auth:22"],
+    },
+    {
+      // Internet-facing boxes can't touch the SSO server.
+      "src":    "web",
+      "deny":   ["auth:443", "auth:22"],
+    },
+    {
+      "src":    "game",
+      "deny":   ["auth:443", "auth:22"],
     },
     {
       "src":    "unknown-device",
