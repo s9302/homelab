@@ -11,229 +11,289 @@
 // reach one destination on the whole tailnet.
 
 {
-  "hosts": {
-    // Infrastructure
-    "proxmox":     "<proxmox-tailnet-ip>",
-    "vaultwarden": "<vaultwarden-tailnet-ip>",
-    "nextcloud":   "<nextcloud-tailnet-ip>",
-    "pihole":      "<pihole-tailnet-ip>",
-    "wazuh":       "<wazuh-tailnet-ip>",
-    "uptime":      "<uptime-tailnet-ip>",
-    "web":         "<web-tailnet-ip>",
-    "sandbox":     "<sandbox-tailnet-ip>",
-    "pve2":        "<pve2-tailnet-ip>",
-    "pve3":        "<pve3-tailnet-ip>",
-    "monitor":     "<monitor-tailnet-ip>",
-    "game":        "<game-tailnet-ip>",
-    "romm":        "<romm-tailnet-ip>",
-    "xemu":        "<xemu-tailnet-ip>",
-    "langfuse":    "<langfuse-tailnet-ip>",
-    "auth":        "<auth-tailnet-ip>",
+	"hosts": {
+		// Infrastructure
+		"proxmox":     "<proxmox-tailnet-ip>",
+		"vaultwarden": "<vaultwarden-tailnet-ip>",
+		"nextcloud":   "<nextcloud-tailnet-ip>",
+		"pihole":      "<pihole-tailnet-ip>",
+		"wazuh":       "<wazuh-tailnet-ip>",
+		"uptime":      "<uptime-tailnet-ip>",
+		"web":         "<web-tailnet-ip>",
+		"sandbox":     "<sandbox-tailnet-ip>",
+		"pve2":        "<pve2-tailnet-ip>",
+		"pve3":        "<pve3-tailnet-ip>",
+		"monitor":     "<monitor-tailnet-ip>",
+		"game":        "<game-tailnet-ip>",
+		"romm":        "<romm-tailnet-ip>",
+		"xemu":        "<xemu-tailnet-ip>",
+		"langfuse":    "<langfuse-tailnet-ip>",
+		"auth":        "<auth-tailnet-ip>",
 
-    // Personal devices
-    "macbook":     "<macbook-tailnet-ip>",
-    "iphone":      "<iphone-tailnet-ip>",
-    "desktop":     "<desktop-tailnet-ip>",
-    "unknown-device":    "<unknown-device-tailnet-ip>",
-  },
+		// Personal devices
+		"macbook":  "<macbook-tailnet-ip>",
+		"iphone":   "<iphone-tailnet-ip>",
+		"desktop":  "<desktop-tailnet-ip>",
+		"unknown-device": "<unknown-device-tailnet-ip>",
+	},
 
-  "acls": [
-    // === Spencer's own devices: full access, including SSH. ===
-    {
-      "action": "accept",
-      "src":    ["macbook", "iphone", "desktop"],
-      "dst":    ["*:*"],
-    },
+	"acls": [
+		// === Spencer's own devices: full access, including SSH. ===
+		{
+			"action": "accept",
+			"src":    ["macbook", "iphone", "desktop"],
+			"dst":    ["*:*"],
+		},
 
-    // === Proxmox: allowed to SSH anywhere, as the in-lab jump host. ===
-    // Also needs its own Wazuh agent to reach the manager.
-    {
-      "action": "accept",
-      "src":    ["proxmox"],
-      "dst":    ["*:22", "wazuh:1514,1515"],
-    },
+		// === Proxmox: allowed to SSH anywhere, as the in-lab jump host. ===
+		// Also needs its own Wazuh agent to reach the manager.
+		{
+			"action": "accept",
+			"src":    ["proxmox"],
+			"dst":    ["*:22", "wazuh:1514,1515"],
+		},
 
-    // === The internet-facing web container. ===
-    // Its only tailnet dependency is shipping logs to Wazuh; the Cloudflare tunnel
-    // egresses straight to the internet and never touches the tailnet.
-    // No SSH out. No access to Vaultwarden, Nextcloud, Pi-hole or the host.
-    {
-      "action": "accept",
-      "src":    ["web"],
-      "dst":    ["wazuh:1514,1515"],
-    },
+		// === The internet-facing web container. ===
+		// Its only tailnet dependency is shipping logs to Wazuh; the Cloudflare tunnel
+		// egresses straight to the internet and never touches the tailnet.
+		// No SSH out. No access to Vaultwarden, Nextcloud, Pi-hole or the host.
+		{
+			"action": "accept",
+			"src":    ["web"],
+			"dst":    ["wazuh:1514,1515"],
+		},
 
-    // === Wizard Academy game server (VM 104 on pve2). ===
-    // Internet-facing via its own Cloudflare tunnel, which egresses straight to
-    // the internet. Like `web`, its only tailnet dependency is its Wazuh agent.
-    {
-      "action": "accept",
-      "src":    ["game"],
-      "dst":    ["wazuh:1514,1515"],
-    },
+		// === Wizard Academy game server (VM 104 on pve2). ===
+		// Internet-facing via its own Cloudflare tunnel, which egresses straight to
+		// the internet. Like `web`, its only tailnet dependency is its Wazuh agent.
+		{
+			"action": "accept",
+			"src":    ["game"],
+			"dst":    ["wazuh:1514,1515"],
+		},
 
-    // === Wazuh agents on the remaining hosts. No SSH. ===
-    {
-      "action": "accept",
-      "src":    ["vaultwarden", "pihole", "uptime", "monitor", "romm", "xemu", "langfuse", "auth"],
-      "dst":    ["wazuh:1514,1515"],
-    },
+		// === Wazuh agents on the remaining hosts. No SSH. ===
+		{
+			"action": "accept",
+			"src": [
+				"vaultwarden",
+				"pihole",
+				"uptime",
+				"monitor",
+				"romm",
+				"xemu",
+				"langfuse",
+				"auth",
+			],
+			"dst": ["wazuh:1514,1515"],
+		},
 
-    // === Cluster nodes pve2/pve3: DNS via Pi-hole and their Wazuh agents. ===
-    // Corosync and migrations run over the private switch VLAN (10.10.10.0/24),
-    // not the tailnet, so they need nothing else here. No SSH out.
-    {
-      "action": "accept",
-      "src":    ["pve2", "pve3"],
-      "dst":    ["pihole:53", "wazuh:1514,1515"],
-    },
+		// === Cluster nodes pve2/pve3: DNS via Pi-hole and their Wazuh agents. ===
+		// Corosync and migrations run over the private switch VLAN (10.10.10.0/24),
+		// not the tailnet, so they need nothing else here. No SSH out.
+		{
+			"action": "accept",
+			"src":    ["pve2", "pve3"],
+			"dst":    ["pihole:53", "wazuh:1514,1515"],
+		},
 
-    // === Prometheus/Grafana (LXC 203 on pve2). Scrapes only; no SSH out. ===
-    // 8006 = Proxmox API for pve-exporter, 9100 = node_exporter on each node.
-    {
-      "action": "accept",
-      "src":    ["monitor"],
-      "dst":    ["proxmox:8006,9100", "pve2:9100", "pve3:9100", "pihole:53"],
-    },
+		// === Prometheus/Grafana (LXC 203 on pve2). Scrapes only; no SSH out. ===
+		// 8006 = Proxmox API for pve-exporter, 9100 = node_exporter on each node.
+		{
+			"action": "accept",
+			"src":    ["monitor"],
+			"dst":    ["proxmox:8006,9100", "pve2:9100", "pve3:9100", "pihole:53"],
+		},
 
-    // === Nextcloud has no native agent (musl); it forwards syslog instead. ===
-    {
-      "action": "accept",
-      "src":    ["nextcloud"],
-      "dst":    ["wazuh:514"],
-    },
+		// === Nextcloud has no native agent (musl); it forwards syslog instead. ===
+		{
+			"action": "accept",
+			"src":    ["nextcloud"],
+			"dst":    ["wazuh:514"],
+		},
 
-    // === Uptime Kuma probes exactly what it monitors - service ports only. ===
-    {
-      "action": "accept",
-      "src":    ["uptime"],
-      "dst":    [
-        "vaultwarden:443",
-        "nextcloud:443",
-        "proxmox:8006",
-        "web:80",
-        "wazuh:1514",
-        "pihole:53",
-        "monitor:3000",
-        "langfuse:443",
-      ],
-    },
+		// === Uptime Kuma probes exactly what it monitors - service ports only. ===
+		{
+			"action": "accept",
+			"src":    ["uptime"],
+			"dst": [
+				"vaultwarden:443",
+				"nextcloud:443",
+				"proxmox:8006",
+				"web:80",
+				"wazuh:1514",
+				"pihole:53",
+				"monitor:3000",
+				"langfuse:443",
+			],
+		},
 
-    // === Authentik SSO (LXC 205 `auth`). ===
-    // Apps that log in through Authentik make server-to-server OIDC calls
-    // (token exchange, userinfo), so they need auth:443. Nothing else.
-    // `auth` itself only reaches Wazuh (block above). No SSH either way.
-    {
-      "action": "accept",
-      "src":    ["proxmox", "pve2", "pve3", "monitor", "romm", "langfuse", "nextcloud", "uptime"],
-      "dst":    ["auth:443"],
-    },
+		// === Authentik SSO (LXC 205 `auth`). ===
+		// Apps that log in through Authentik make server-to-server OIDC calls
+		// (token exchange, userinfo), so they need auth:443. Nothing else.
+		// `auth` itself only reaches Wazuh (block above). No SSH either way.
+		{
+			"action": "accept",
+			"src": [
+				"proxmox",
+				"pve2",
+				"pve3",
+				"monitor",
+				"romm",
+				"langfuse",
+				"nextcloud",
+				"uptime",
+				"wazuh",
+			],
+			"dst": ["auth:443"],
+		},
 
-    // === Claude Code management sandbox. ===
-    // DELETE THIS BLOCK to enforce "only my devices and proxmox can SSH" strictly.
-    // Consequence: Claude can no longer reach any host to administer the lab.
-    {
-      "action": "accept",
-      "src":    ["sandbox"],
-      "dst":    ["*:*"],
-    },
+		// === Claude Code management sandbox. ===
+		// DELETE THIS BLOCK to enforce "only my devices and proxmox can SSH" strictly.
+		// Consequence: Claude can no longer reach any host to administer the lab.
+		{
+			"action": "accept",
+			"src":    ["sandbox"],
+			"dst":    ["*:*"],
+		},
 
-    // NOTE: `unknown-device` is defined above but granted nothing, so it loses all
-    // access when this policy is saved. Add a block for it if that is wrong.
-  ],
+		// NOTE: `unknown-device` is defined above but granted nothing, so it loses all
+		// access when this policy is saved. Add a block for it if that is wrong.
+	],
 
-  // Guardrails: Tailscale runs these on save and rejects the policy if any fail.
-  "tests": [
-    {
-      "src":    "macbook",
-      "accept": ["vaultwarden:22", "proxmox:22", "vaultwarden:443", "proxmox:8006"],
-    },
-    {
-      "src":    "proxmox",
-      "accept": ["vaultwarden:22", "web:22", "nextcloud:22"],
-    },
-    {
-      // The whole point: the internet-facing box is contained.
-      "src":    "web",
-      "accept": ["wazuh:1514"],
-      "deny":   ["vaultwarden:22", "vaultwarden:443", "proxmox:22", "proxmox:8006", "nextcloud:443"],
-    },
-    {
-      // Monitoring can probe, but never shell in.
-      "src":    "uptime",
-      "accept": ["vaultwarden:443", "proxmox:8006"],
-      "deny":   ["vaultwarden:22", "proxmox:22", "nextcloud:22"],
-    },
-    {
-      // Cluster nodes get DNS and Wazuh, never a shell elsewhere.
-      "src":    "pve2",
-      "accept": ["pihole:53", "wazuh:1514"],
-      "deny":   ["vaultwarden:22", "vaultwarden:443", "proxmox:22", "pve3:22"],
-    },
-    {
-      "src":    "macbook",
-      "accept": ["pve2:22", "pve3:22", "pve2:8006", "pve3:8006"],
-    },
-    {
-      // Monitoring box reads metrics, never gets a shell.
-      "src":    "monitor",
-      "accept": ["proxmox:8006", "proxmox:9100", "pve2:9100", "pve3:9100"],
-      "deny":   ["proxmox:22", "pve2:22", "vaultwarden:443", "vaultwarden:22"],
-    },
-    {
-      "src":    "macbook",
-      "accept": ["monitor:3000"],
-    },
-    {
-      // The game server is internet-facing too: contained like `web`.
-      "src":    "game",
-      "accept": ["wazuh:1514", "wazuh:1515"],
-      "deny":   ["vaultwarden:22", "vaultwarden:443", "proxmox:22", "proxmox:8006", "pve2:22", "pve2:8006", "web:22", "nextcloud:443", "pihole:53"],
-    },
-    {
-      "src":    "macbook",
-      "accept": ["game:8080", "game:22"],
-    },
-    {
-      // Langfuse holds LLM session traces: it reports to Wazuh, nothing else.
-      "src":    "langfuse",
-      "accept": ["wazuh:1514", "wazuh:1515"],
-      "deny":   ["vaultwarden:22", "vaultwarden:443", "proxmox:22", "proxmox:8006", "pve2:22", "sandbox:22", "sandbox:8800", "nextcloud:443"],
-    },
-    {
-      // Kuma may probe Langfuse's HTTPS but not its Postgres or a shell.
-      "src":    "uptime",
-      "accept": ["langfuse:443"],
-      "deny":   ["langfuse:22", "langfuse:5432", "langfuse:3000"],
-    },
-    {
-      // The SSO server holds the keys to every app: it may only report to Wazuh.
-      "src":    "auth",
-      "accept": ["wazuh:1514", "wazuh:1515"],
-      "deny":   ["vaultwarden:22", "vaultwarden:443", "proxmox:22", "proxmox:8006", "pve2:22", "sandbox:22", "sandbox:8800", "nextcloud:443", "monitor:3000"],
-    },
-    {
-      // Apps reach Authentik's HTTPS only, never its shell or Postgres.
-      "src":    "monitor",
-      "accept": ["auth:443"],
-      "deny":   ["auth:22", "auth:5432", "auth:9000"],
-    },
-    {
-      "src":    "macbook",
-      "accept": ["auth:443", "auth:22"],
-    },
-    {
-      // Internet-facing boxes can't touch the SSO server.
-      "src":    "web",
-      "deny":   ["auth:443", "auth:22"],
-    },
-    {
-      "src":    "game",
-      "deny":   ["auth:443", "auth:22"],
-    },
-    {
-      "src":    "unknown-device",
-      "deny":   ["vaultwarden:443", "vaultwarden:22", "proxmox:8006"],
-    },
-  ],
+	// Guardrails: Tailscale runs these on save and rejects the policy if any fail.
+	"tests": [
+		{
+			"src":    "macbook",
+			"accept": ["vaultwarden:22", "proxmox:22", "vaultwarden:443", "proxmox:8006"],
+		},
+		{
+			"src":    "proxmox",
+			"accept": ["vaultwarden:22", "web:22", "nextcloud:22"],
+		},
+		{
+			// The whole point: the internet-facing box is contained.
+			"src":    "web",
+			"accept": ["wazuh:1514"],
+			"deny": [
+				"vaultwarden:22",
+				"vaultwarden:443",
+				"proxmox:22",
+				"proxmox:8006",
+				"nextcloud:443",
+			],
+		},
+		{
+			// Monitoring can probe, but never shell in.
+			"src":    "uptime",
+			"accept": ["vaultwarden:443", "proxmox:8006"],
+			"deny":   ["vaultwarden:22", "proxmox:22", "nextcloud:22"],
+		},
+		{
+			// Cluster nodes get DNS and Wazuh, never a shell elsewhere.
+			"src":    "pve2",
+			"accept": ["pihole:53", "wazuh:1514"],
+			"deny":   ["vaultwarden:22", "vaultwarden:443", "proxmox:22", "pve3:22"],
+		},
+		{
+			"src":    "macbook",
+			"accept": ["pve2:22", "pve3:22", "pve2:8006", "pve3:8006"],
+		},
+		{
+			// Monitoring box reads metrics, never gets a shell.
+			"src":    "monitor",
+			"accept": ["proxmox:8006", "proxmox:9100", "pve2:9100", "pve3:9100"],
+			"deny":   ["proxmox:22", "pve2:22", "vaultwarden:443", "vaultwarden:22"],
+		},
+		{
+			"src":    "macbook",
+			"accept": ["monitor:3000"],
+		},
+		{
+			// The game server is internet-facing too: contained like `web`.
+			"src":    "game",
+			"accept": ["wazuh:1514", "wazuh:1515"],
+			"deny": [
+				"vaultwarden:22",
+				"vaultwarden:443",
+				"proxmox:22",
+				"proxmox:8006",
+				"pve2:22",
+				"pve2:8006",
+				"web:22",
+				"nextcloud:443",
+				"pihole:53",
+			],
+		},
+		{
+			"src":    "macbook",
+			"accept": ["game:8080", "game:22"],
+		},
+		{
+			// Langfuse holds LLM session traces: it reports to Wazuh, nothing else.
+			"src":    "langfuse",
+			"accept": ["wazuh:1514", "wazuh:1515"],
+			"deny": [
+				"vaultwarden:22",
+				"vaultwarden:443",
+				"proxmox:22",
+				"proxmox:8006",
+				"pve2:22",
+				"sandbox:22",
+				"sandbox:8800",
+				"nextcloud:443",
+			],
+		},
+		{
+			// Kuma may probe Langfuse's HTTPS but not its Postgres or a shell.
+			"src":    "uptime",
+			"accept": ["langfuse:443"],
+			"deny":   ["langfuse:22", "langfuse:5432", "langfuse:3000"],
+		},
+		{
+			// The SSO server holds the keys to every app: it may only report to Wazuh.
+			"src":    "auth",
+			"accept": ["wazuh:1514", "wazuh:1515"],
+			"deny": [
+				"vaultwarden:22",
+				"vaultwarden:443",
+				"proxmox:22",
+				"proxmox:8006",
+				"pve2:22",
+				"sandbox:22",
+				"sandbox:8800",
+				"nextcloud:443",
+				"monitor:3000",
+			],
+		},
+		{
+			// Apps reach Authentik's HTTPS only, never its shell or Postgres.
+			"src":    "monitor",
+			"accept": ["auth:443"],
+			"deny":   ["auth:22", "auth:5432", "auth:9000"],
+		},
+		{
+			"src":    "macbook",
+			"accept": ["auth:443", "auth:22"],
+		},
+		{
+			// Wazuh dashboard/indexer fetch Authentik's keys for SSO; still no shell.
+			"src":    "wazuh",
+			"accept": ["auth:443"],
+			"deny":   ["auth:22", "vaultwarden:22", "proxmox:22"],
+		},
+		{
+			// Internet-facing boxes can't touch the SSO server.
+			"src":  "web",
+			"deny": ["auth:443", "auth:22"],
+		},
+		{
+			"src":  "game",
+			"deny": ["auth:443", "auth:22"],
+		},
+		{
+			"src":  "unknown-device",
+			"deny": ["vaultwarden:443", "vaultwarden:22", "proxmox:8006"],
+		},
+	],
 }
