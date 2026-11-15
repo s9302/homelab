@@ -13,6 +13,7 @@ Secrets are not in here. Anything that was a password, token, client secret or w
 | `nodes/<node>/` | Per-node files at their real paths: `node-auto-update` + timer, `wazuh-wait-tailscale`, iptables rules, `/etc/network/interfaces`, NFS exports, `llm-sandbox` (pve2), `lab-status` (pve3), `site-repo-snapshot` (proxmox) |
 | `services/<name>/` | Per-service files at their real paths: compose files, systemd units, Caddyfile, cloudflared configs, Forgejo `app.ini`, Pi-hole, Prometheus + Grafana alerting |
 | `authentik/` | `mkprov.sh` / `mkprov.py`, which create an OIDC provider + app in Authentik |
+| `wazuh/manager/` | Wazuh manager config at its real path: `ossec.conf`, custom rules (`local_rules.xml`), decoders, shared agent config |
 | `wazuh/scripts/` | Wazuh dashboard SSO setup and the Authentik login-alert rules/decoder |
 | `docs/` | Setup logs for RomM and the xemu VM |
 
