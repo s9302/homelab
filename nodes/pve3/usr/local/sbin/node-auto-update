@@ -1,0 +1,91 @@
+#!/bin/bash
+# Weekly update of a Proxmox node, with a reboot only when one is needed.
+# Each node's timer runs on a different night, so only one node goes down at a time.
+#   node-auto-update          upgrade, then reboot if needed
+#   node-auto-update --check  report what would happen, change nothing
+set -uo pipefail
+export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none
+CHECK=0; [ "${1:-}" = "--check" ] && CHECK=1
+NODE=$(hostname -s)
+GAME_VM=105   # xemu: don't reboot this node while someone is playing
+
+exec 9>/run/lock/node-auto-update.lock
+flock -n 9 || { echo "already running"; exit 0; }
+
+# Sends to Discord through the cluster's discord-errors notification matcher.
+notify() {
+    echo "$1"
+    [ "$CHECK" = 1 ] && return 0
+    perl -MPVE::Notify -e 'PVE::Notify::warning("node-auto-update",
+        {node => $ARGV[0], message => $ARGV[1]},
+        {hostname => $ARGV[0], type => "node-auto-update"})' "$NODE" "$1" || true
+}
+
+# Prints why the cluster isn't safe to take a node out of. Prints nothing if it is.
+cluster_problem() {
+    local s; s=$(pvecm status 2>&1)
+    grep -q 'Quorate: *Yes' <<<"$s" || { echo "cluster not quorate"; return; }
+    [ "$(awk '/Total votes:/{print $3}' <<<"$s")" = "$(awk '/Expected votes:/{print $3}' <<<"$s")" ] \
+        || { echo "not all nodes are voting"; return; }
+    pvesh get /cluster/resources --type node --output-format json | python3 -c '
+import json, sys
+for n in json.load(sys.stdin):
+    if n["status"] != "online": print(n["node"], "is offline")
+    elif n["node"] != sys.argv[1] and n.get("uptime", 0) < 600: print(n["node"], "only just rebooted")
+' "$NODE"
+}
+
+backup_running() {
+    pvesh get /cluster/tasks --output-format json | python3 -c '
+import json, sys
+sys.exit(0 if any(t["type"] == "vzdump" and "endtime" not in t for t in json.load(sys.stdin)) else 1)'
+}
+
+playing() {
+    [ -f "/etc/pve/qemu-server/$GAME_VM.conf" ] || return 1
+    qm status "$GAME_VM" | grep -q running || return 1
+    qm guest exec "$GAME_VM" --timeout 15 -- pgrep -x xemu 2>/dev/null | grep -q '"exitcode" : 0'
+}
+
+# Prints the reason a reboot is needed. Prints nothing if it isn't.
+reboot_reason() {
+    local newest; newest=$(ls /boot/vmlinuz-*-pve 2>/dev/null | sort -V | tail -1); newest=${newest#/boot/vmlinuz-}
+    if [ -n "$newest" ] && [ "$newest" != "$(uname -r)" ]; then echo "kernel $(uname -r) -> $newest"
+    elif [ -f /run/reboot-required ]; then echo "reboot-required flag"
+    elif [ -n "$(find /var/lib/dpkg/info/libc6:amd64.list /var/lib/dpkg/info/systemd.list -newermt "$(uptime -s)" 2>/dev/null)" ]; then echo "libc or systemd updated"
+    fi
+}
+
+problem=$(cluster_problem)
+if [ -n "$problem" ]; then notify "Skipped update: $problem"; exit 1; fi
+
+apt-get update -qq || { notify "Skipped update: apt-get update failed"; exit 1; }
+sim=$(apt-get -s dist-upgrade)
+removals=$(grep '^Remv' <<<"$sim" | cut -d' ' -f2 | tr '\n' ' ')
+if [ -n "$removals" ]; then notify "Skipped update: it would remove packages: $removals"; exit 1; fi
+
+if [ "$CHECK" = 1 ]; then
+    echo "would upgrade: $(grep -c '^Inst' <<<"$sim") packages"
+    grep '^Inst' <<<"$sim" | grep -E '^Inst (proxmox-kernel|proxmox-ve|pve-manager|corosync|libc6|systemd) ' | cut -d' ' -f2-3
+    echo "reboot needed now: $(reboot_reason)"
+    backup_running && echo "backup running: yes" || echo "backup running: no"
+    playing && echo "playing: yes" || echo "playing: no"
+    exit 0
+fi
+
+opts=(-y -o DPkg::Lock::Timeout=900 -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef)
+apt-get "${opts[@]}" dist-upgrade || { notify "apt dist-upgrade FAILED, check this node"; exit 1; }
+apt-get "${opts[@]}" autoremove || true
+
+reason=$(reboot_reason)
+[ -n "$reason" ] || { echo "no reboot needed"; exit 0; }
+echo "reboot needed: $reason"
+
+for _ in $(seq 120); do backup_running || break; echo "waiting for backup"; sleep 60; done
+if backup_running; then notify "Skipped reboot ($reason): a backup is still running"; exit 1; fi
+if playing; then notify "Skipped reboot ($reason): someone is playing on xemu"; exit 0; fi
+problem=$(cluster_problem)
+if [ -n "$problem" ]; then notify "Skipped reboot ($reason): $problem"; exit 1; fi
+
+echo "rebooting: $reason"
+systemctl reboot

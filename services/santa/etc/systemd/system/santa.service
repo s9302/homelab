@@ -1,0 +1,31 @@
+[Unit]
+Description=Secret Santa web app
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=santa
+Group=santa
+WorkingDirectory=/opt/santa
+EnvironmentFile=/etc/santa/santa.env
+ExecStart=/usr/bin/node /opt/santa/server.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ReadWritePaths=/var/lib/santa
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

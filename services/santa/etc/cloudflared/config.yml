@@ -1,0 +1,7 @@
+# Cloudflare Tunnel for santa.spencersmith.win (outbound-only, no open ports)
+tunnel: 0639c2a7-eb34-4ee3-885c-c9482bb50e5a
+credentials-file: /etc/cloudflared/0639c2a7-eb34-4ee3-885c-c9482bb50e5a.json
+ingress:
+  - hostname: santa.spencersmith.win
+    service: http://127.0.0.1:8080
+  - service: http_status:404

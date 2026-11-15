@@ -1,0 +1,13 @@
+*filter
+:INPUT ACCEPT [0:0]
+-A INPUT -i lo -j ACCEPT
+-A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+-A INPUT -i tailscale0 -j ACCEPT
+-A INPUT -p ipv6-icmp --icmpv6-type 133 -j ACCEPT
+-A INPUT -p ipv6-icmp --icmpv6-type 134 -j ACCEPT
+-A INPUT -p ipv6-icmp --icmpv6-type 135 -j ACCEPT
+-A INPUT -p ipv6-icmp --icmpv6-type 136 -j ACCEPT
+-A INPUT -p udp --dport 546 -j ACCEPT
+-A INPUT -p udp --dport 41641 -j ACCEPT
+-A INPUT -i eth0 -j DROP
+COMMIT

@@ -1,0 +1,1 @@
+*/5 * * * * root /usr/local/sbin/lab-status >/dev/null 2>>/var/log/lab-status.log

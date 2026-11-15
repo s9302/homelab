@@ -1,0 +1,14 @@
+#!/bin/sh
+# Block wazuh-agent startup until the manager is routed over tailscale0.
+# If agentd connects before Tailscale is up, the SYN leaves via the LAN with
+# a non-tailnet source address and the connect hangs, leaving the agent
+# "pending" until someone restarts it by hand.
+MANAGER=<wazuh-tailnet-ip>
+i=0
+while [ "$i" -lt 90 ]; do
+    ip route get "$MANAGER" 2>/dev/null | grep -q 'dev tailscale0' && exit 0
+    i=$((i + 1))
+    sleep 1
+done
+echo "wazuh-wait-tailscale: no tailscale0 route to $MANAGER after 90s, starting anyway" >&2
+exit 0

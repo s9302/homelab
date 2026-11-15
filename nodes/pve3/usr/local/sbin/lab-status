@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""Publish a sanitized homelab status snapshot to the public website.
+
+Runs on a cluster node from cron. Reads cluster state with pvesh, keeps only
+an allowlisted set of fields under generic public labels, and pushes the JSON
+into the web container with `pct push`. Push-from-the-hypervisor on purpose:
+the public container gets no new network path and holds no credentials.
+
+Never published: IPs, hostnames, VM IDs, software versions, ports.
+Guests not in PUBLIC are only counted.
+"""
+import json, os, subprocess, sys, tempfile, time
+
+# cron runs with PATH=/usr/bin:/bin; pct lives in /usr/sbin.
+os.environ["PATH"] = "/usr/sbin:/usr/bin:/sbin:/bin"
+
+WEB_CT = "201"
+DEST = "/srv/www/labdata/status.json"
+
+NODES = {"proxmox": "Node 1", "pve2": "Node 2", "pve3": "Node 3"}
+
+# vmid -> (public label, group, on_demand)
+# on_demand guests are expected to be stopped most of the time, so stopped
+# shows as "idle" rather than "down".
+PUBLIC = {
+    201: ("This website", "Public", False),
+    104: ("Multiplayer game server", "Public", False),
+    107: ("Secret Santa app", "Public", False),
+    205: ("Single sign-on", "Identity & access", False),
+    100: ("Password vault", "Everyday services", False),
+    101: ("File storage", "Everyday services", False),
+    200: ("DNS filtering", "Everyday services", False),
+    108: ("Calendar & task planner", "Everyday services", False),
+    102: ("SIEM / EDR", "Security & monitoring", False),
+    202: ("Uptime monitoring", "Security & monitoring", False),
+    203: ("Metrics & dashboards", "Security & monitoring", False),
+    103: ("AI admin agent", "AI", False),
+    204: ("AI usage monitoring", "AI", False),
+    411: ("Isolated LLM sandbox", "AI", True),
+    400: ("Attack box", "Attack lab", True),
+    300: ("Vulnerable target", "Attack lab", True),
+}
+
+
+def pvesh(path):
+    out = subprocess.run(["pvesh", "get", path, "--output-format", "json"],
+                         check=True, capture_output=True, text=True).stdout
+    return json.loads(out)
+
+
+def main():
+    res = pvesh("/cluster/resources")
+    nodes, services = [], []
+    cpu_used = cpu_total = mem_used = mem_total = 0
+    running = total = 0
+    web_node = None
+
+    for r in res:
+        if r.get("type") == "node" and r.get("node") in NODES:
+            online = r.get("status") == "online"
+            nodes.append({
+                "name": NODES[r["node"]],
+                "online": online,
+                "cpu_pct": round(100 * r.get("cpu", 0)),
+                "mem_pct": round(100 * r.get("mem", 0) / r["maxmem"]) if r.get("maxmem") else 0,
+            })
+            if online:
+                cpu_total += r.get("maxcpu", 0)
+                cpu_used += r.get("cpu", 0) * r.get("maxcpu", 0)
+                mem_total += r.get("maxmem", 0)
+                mem_used += r.get("mem", 0)
+        elif r.get("type") in ("qemu", "lxc") and not r.get("template"):
+            total += 1
+            up = r.get("status") == "running"
+            running += up
+            if r.get("vmid") == int(WEB_CT):
+                web_node = r.get("node")
+            if r.get("vmid") in PUBLIC:
+                label, group, on_demand = PUBLIC[r["vmid"]]
+                state = "up" if up else ("idle" if on_demand else "down")
+                services.append({"name": label, "group": group, "state": state})
+
+    nodes.sort(key=lambda n: n["name"])
+    order = list(dict.fromkeys(g for _, g, _ in PUBLIC.values()))
+    services.sort(key=lambda s: (order.index(s["group"]), s["name"]))
+
+    status = {
+        "updated": int(time.time()),
+        "nodes": nodes,
+        "totals": {
+            "guests": total,
+            "running": running,
+            "cores": cpu_total,
+            "cpu_pct": round(100 * cpu_used / cpu_total) if cpu_total else 0,
+            "mem_gib": round(mem_total / 2**30),
+            "mem_pct": round(100 * mem_used / mem_total) if mem_total else 0,
+        },
+        "services": services,
+    }
+
+    if "--dry-run" in sys.argv:
+        print(json.dumps(status, indent=2))
+        return 0
+
+    me = os.uname().nodename
+    if web_node != me:
+        print(f"web container is on {web_node}, not {me}; skipping", file=sys.stderr)
+        return 0
+
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump(status, f, separators=(",", ":"))
+        tmp = f.name
+    try:
+        subprocess.run(["pct", "push", WEB_CT, tmp, DEST + ".tmp", "--perms", "0644"], check=True)
+        subprocess.run(["pct", "exec", WEB_CT, "--", "mv", "-f", DEST + ".tmp", DEST], check=True)
+    finally:
+        os.unlink(tmp)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

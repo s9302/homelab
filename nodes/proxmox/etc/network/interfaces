@@ -1,0 +1,30 @@
+auto lo
+iface lo inet loopback
+
+iface nic0 inet manual
+    # I219-LM (e1000e) TX Hardware Unit Hang under streaming load, 2026-10-15
+    post-up /usr/sbin/ethtool -K nic0 tso off gso off
+
+auto vmbr0
+iface vmbr0 inet static
+    address <lan-ip>/10
+    gateway <lan-ip>
+    bridge-ports nic0
+    bridge-stp off
+    bridge-fd 0
+    bridge-vlan-aware yes
+    bridge-vids 2-4094
+
+auto vmbr0.10
+iface vmbr0.10 inet static
+    address 10.10.10.1/24
+#Cluster VLAN
+
+auto vmbr1
+iface vmbr1 inet manual
+    bridge-ports none
+    bridge-stp off
+    bridge-fd 0
+#Isolated lab network
+
+source /etc/network/interfaces.d/*

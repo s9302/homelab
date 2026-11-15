@@ -1,0 +1,241 @@
+apiVersion: 1
+groups:
+- orgId: 1
+  name: homelab
+  folder: Homelab
+  interval: 1m
+  rules:
+  - uid: node-down
+    title: Proxmox node down
+    condition: C
+    for: 3m
+    noDataState: OK
+    execErrState: Error
+    annotations:
+      summary: '{{ $labels.instance }} has stopped reporting metrics for 3 minutes.'
+    labels:
+      severity: critical
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: prometheus
+      model:
+        refId: A
+        expr: up{job="node",instance!="monitor:9100",instance!="localhost:9100"}
+        instant: true
+        range: false
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: A
+        conditions:
+        - evaluator:
+            type: lt
+            params:
+            - 1
+  - uid: guest-down
+    title: Homelab service stopped
+    condition: C
+    for: 5m
+    noDataState: OK
+    execErrState: Error
+    annotations:
+      summary: Guest {{ $labels.id }} is not running.
+    labels:
+      severity: critical
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: prometheus
+      model:
+        refId: A
+        expr: pve_up{id=~"lxc/(100|101|200|201|202|203)|qemu/102"}
+        instant: true
+        range: false
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: A
+        conditions:
+        - evaluator:
+            type: lt
+            params:
+            - 1
+  - uid: high-temp
+    title: Node running hot
+    condition: C
+    for: 5m
+    noDataState: OK
+    execErrState: Error
+    annotations:
+      summary: '{{ $labels.instance }} hottest sensor is {{ $values.A.Value | printf
+        "%.0f" }} C.'
+    labels:
+      severity: warning
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: prometheus
+      model:
+        refId: A
+        expr: max by(instance)(node_hwmon_temp_celsius{instance!="monitor:9100",instance!="localhost:9100"})
+        instant: true
+        range: false
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: A
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 85
+  - uid: disk-full
+    title: Filesystem almost full
+    condition: C
+    for: 10m
+    noDataState: OK
+    execErrState: Error
+    annotations:
+      summary: '{{ $labels.instance }} {{ $labels.mountpoint }} is {{ $values.A.Value
+        | printf "%.0f" }}% full.'
+    labels:
+      severity: warning
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: prometheus
+      model:
+        refId: A
+        expr: 100 * (1 - node_filesystem_avail_bytes{fstype=~"ext4|xfs|zfs|vfat",instance!="monitor:9100",instance!="localhost:9100"}
+          / node_filesystem_size_bytes{fstype=~"ext4|xfs|zfs|vfat",instance!="monitor:9100",instance!="localhost:9100"})
+        instant: true
+        range: false
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: A
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 90
+  - uid: storage-full
+    title: Proxmox storage almost full
+    condition: C
+    for: 10m
+    noDataState: OK
+    execErrState: Error
+    annotations:
+      summary: Storage {{ $labels.id }} is {{ $values.A.Value | printf "%.0f" }}%
+        full.
+    labels:
+      severity: warning
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: prometheus
+      model:
+        refId: A
+        expr: 100 * pve_disk_usage_bytes{id=~"storage/.*"} / (pve_disk_size_bytes{id=~"storage/.*"}
+          > 0)
+        instant: true
+        range: false
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: A
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 90
+  - uid: memory-pressure
+    title: Node memory pressure
+    condition: C
+    for: 10m
+    noDataState: OK
+    execErrState: Error
+    annotations:
+      summary: '{{ $labels.instance }} memory is {{ $values.A.Value | printf "%.0f"
+        }}% used.'
+    labels:
+      severity: warning
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: prometheus
+      model:
+        refId: A
+        expr: 100 * (1 - node_memory_MemAvailable_bytes{instance!="monitor:9100",instance!="localhost:9100"}
+          / node_memory_MemTotal_bytes{instance!="monitor:9100",instance!="localhost:9100"})
+        instant: true
+        range: false
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: A
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 92
+  - uid: pve2-pool-80
+    title: pve2 disk pool filling up
+    condition: C
+    for: 10m
+    noDataState: OK
+    execErrState: Error
+    annotations:
+      summary: pve2 pool pve/data is {{ $values.A.Value | printf "%.0f" }}% full.
+    labels:
+      severity: warning
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: prometheus
+      model:
+        refId: A
+        expr: 100 * pve_disk_usage_bytes{id="storage/pve2/local-lvm"} / (pve_disk_size_bytes{id="storage/pve2/local-lvm"} > 0)
+        instant: true
+        range: false
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: A
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 80
+deleteRules:
+  - orgId: 1
+    uid: setup-test

@@ -1,0 +1,37 @@
+#!/bin/bash
+# Pull a full git bundle of the website source out of LXC 201 onto Storage_2.
+#
+# Pull-based on purpose: this runs on the hypervisor and uses `pct exec`/`pct pull`,
+# which root already has. The public-facing container is never given SSH access to
+# the host, so a compromise of the website cannot reach the hypervisor this way.
+#
+# Note: git is deliberately NOT installed on the hypervisor, so the bundle is both
+# created and verified inside the container; the host only moves the finished file.
+#
+# Restore with:  git clone /Storage_2/git/site.bundle site
+set -euo pipefail
+
+CTID=201
+SRC=/srv/www/site
+DEST=/Storage_2/git
+STAMP=$(date +%Y%m%d)
+
+mkdir -p "$DEST"
+
+pct exec "$CTID" -- git -C "$SRC" bundle create /tmp/site.bundle --all >/dev/null 2>&1
+
+# Verify inside the container, where git exists, before trusting the file.
+if ! pct exec "$CTID" -- git -C "$SRC" bundle verify /tmp/site.bundle >/dev/null 2>&1; then
+	pct exec "$CTID" -- rm -f /tmp/site.bundle
+	echo "$(date -Is) ERROR: bundle failed verification in container, kept previous copy" >&2
+	exit 1
+fi
+
+pct pull "$CTID" /tmp/site.bundle "$DEST/site.bundle.new"
+pct exec "$CTID" -- rm -f /tmp/site.bundle
+
+mv "$DEST/site.bundle.new" "$DEST/site.bundle"
+cp "$DEST/site.bundle" "$DEST/site-${STAMP}.bundle"
+# keep 7 dated copies
+ls -1t "$DEST"/site-*.bundle 2>/dev/null | tail -n +8 | xargs -r rm -f
+echo "$(date -Is) site bundle updated ($(du -h "$DEST/site.bundle" | cut -f1))"

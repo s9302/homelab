@@ -1,0 +1,17 @@
+# Cloudflare Tunnel for spencersmith.win
+# Outbound-only: cloudflared dials out to Cloudflare's edge and traffic returns
+# down that connection. No inbound ports are forwarded on the router.
+tunnel: <tunnel-id>
+credentials-file: /root/.cloudflared/<tunnel-id>.json
+
+originRequest:
+  connectTimeout: 30s
+  noTLSVerify: false
+
+ingress:
+  - hostname: spencersmith.win
+    service: http://127.0.0.1:80
+  - hostname: www.spencersmith.win
+    service: http://127.0.0.1:80
+  # Anything else that somehow reaches this tunnel gets nothing.
+  - service: http_status:404

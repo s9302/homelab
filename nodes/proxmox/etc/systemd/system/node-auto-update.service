@@ -1,0 +1,7 @@
+[Unit]
+Description=Weekly Proxmox node update, reboot if needed
+After=network-online.target pve-cluster.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/node-auto-update

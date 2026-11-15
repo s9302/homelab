@@ -1,0 +1,21 @@
+# Local changes on top of upstream's docker-compose.yml. Nothing here is reachable from the LAN:
+# the UI is published only through `tailscale serve` -> 127.0.0.1:3000.
+services:
+  langfuse-web:
+    ports: !override
+      - 127.0.0.1:3000:3000
+    environment:
+      AUTH_DISABLE_SIGNUP: "true"
+      # Authentik SSO (2026-11-13). Links to the existing account by email.
+      AUTH_CUSTOM_CLIENT_ID: langfuse
+      AUTH_CUSTOM_CLIENT_SECRET: ${AUTH_CUSTOM_CLIENT_SECRET}
+      AUTH_CUSTOM_ISSUER: https://auth.tailnet-name.ts.net/application/o/langfuse/
+      AUTH_CUSTOM_NAME: Authentik
+      AUTH_CUSTOM_SCOPE: openid email profile
+      AUTH_CUSTOM_ALLOW_ACCOUNT_LINKING: "true"
+  minio:
+    ports: !override
+      - 127.0.0.1:9090:9000
+      - 127.0.0.1:9091:9001
+  langfuse-ai-gateway:
+    profiles: ["disabled"]   # not used; upstream binds it to all interfaces

@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly node update (one node per night)
+
+[Timer]
+OnCalendar=Thu 04:00 America/Denver
+Persistent=false
+
+[Install]
+WantedBy=timers.target

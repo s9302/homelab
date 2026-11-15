@@ -1,0 +1,113 @@
+# Personal website - static Hugo build.
+#
+# Listens on :80 only. Public traffic arrives via cloudflared (outbound tunnel)
+# hitting 127.0.0.1:80; no inbound ports are forwarded on the router.
+# Direct tailnet access (http://web/) lands on the same catch-all block.
+#
+# TLS is terminated at Cloudflare's edge, so this origin only ever sees HTTP.
+# The original scheme arrives in X-Forwarded-Proto - that is what the
+# plaintext redirect below keys off.
+
+(common) {
+	encode gzip zstd
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# Content-Security-Policy and friends. Generated from the built output by
+	# gen-csp on every site-build, because the inline-script hashes change
+	# whenever the theme or a script does.
+	import /etc/caddy/csp.conf
+
+	# Bot policy. Evaluated before file_server by Caddy's directive order.
+	import /etc/caddy/bots.conf
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}
+
+# Force HTTPS for anything that reached the edge over plaintext.
+# Only applies to real public hostnames, so tailnet access over http:// still works.
+(force_https) {
+	@plaintext_public {
+		header X-Forwarded-Proto http
+		host spencersmith.win www.spencersmith.win
+	}
+	redir @plaintext_public https://spencersmith.win{uri} permanent
+}
+
+# www -> apex, permanent.
+http://www.spencersmith.win {
+	import common
+	redir https://spencersmith.win{uri} permanent
+}
+
+# The site: apex via the tunnel, and http://web/ over the tailnet.
+:80 {
+	import common
+	import force_https
+
+	# HSTS - only emitted for requests that arrived over HTTPS at the edge,
+	# so it is never sent to plain-http tailnet clients.
+	@https_public header X-Forwarded-Proto https
+	header @https_public Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+	root * /srv/www/site/public
+
+	# Documents get a short cache life. Cloudflare caches PDFs by extension for
+	# four hours by default, which means replacing a resume leaves the old copy
+	# being served long after the new one is in place - and a browser that saw
+	# the old response holds it too.
+	@documents path *.pdf
+	header @documents Cache-Control "public, max-age=300, must-revalidate"
+
+	# Fingerprinted build assets never change under the same name, so they can
+	# be cached hard.
+	# Hand-written scripts under /js/ keep the same name across edits, so give
+	# them a short life. Otherwise Cloudflare holds the old copy for 4 hours.
+	@sitejs path /js/*
+	header @sitejs Cache-Control "public, max-age=300, must-revalidate"
+
+	@immutable path /assets/*
+	header @immutable Cache-Control "public, max-age=31536000, immutable"
+
+	file_server
+
+	handle_errors {
+		# Tell Cloudflare not to cache misses. Without this a 404 fetched
+		# before a file exists gets cached at the edge for four hours, and the
+		# file stays "missing" long after it has been uploaded.
+		header Cache-Control "no-store, must-revalidate"
+		header -Last-Modified
+		rewrite * /404.html
+		file_server
+	}
+}
+
+# Traffic report, tailnet only. Bound to the Tailscale address so it is
+# unreachable from the internet and from the building LAN, and it is not part
+# of the public site root.
+http://<web-tailnet-ip>:8081 {
+	root * /srv/www/stats
+	file_server browse
+	log {
+		output file /var/log/caddy/stats-access.log
+	}
+}
+
+# Same stats report on localhost, fronted by `tailscale serve` for
+# https://web.tailnet-name.ts.net (tailnet only, real cert).
+http://:8082 {
+	bind 127.0.0.1
+	root * /srv/www/stats
+	file_server browse
+	log {
+		output file /var/log/caddy/stats-access.log
+	}
+}

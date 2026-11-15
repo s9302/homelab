@@ -1,0 +1,1 @@
+45 2 * * * root /usr/local/bin/site-repo-snapshot >> /var/log/site-repo-snapshot.log 2>&1

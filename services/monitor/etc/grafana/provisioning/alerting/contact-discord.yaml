@@ -1,0 +1,10 @@
+apiVersion: 1
+contactPoints:
+  - orgId: 1
+    name: Discord
+    receivers:
+      - uid: discord
+        type: discord
+        settings:
+          url: https://discord.com/api/webhooks/REDACTED
+          use_discord_username: false

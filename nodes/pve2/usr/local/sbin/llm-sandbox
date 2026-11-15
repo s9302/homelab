@@ -1,0 +1,21 @@
+#!/bin/bash
+# Control the untrusted LLM sandbox (VM 411). Runs on pve2.
+ID=411; ROUTER=410; UNIT=llm-sandbox-autostop
+stop_timer(){ systemctl stop $UNIT.timer $UNIT.service 2>/dev/null; }
+case "$1" in
+  start)
+    H=${2:-2}; [[ "$H" =~ ^[0-9]+$ && "$H" -gt 0 ]] || { echo "hours must be a whole number above 0"; exit 1; }
+    [ "$(qm status $ROUTER | awk '{print $2}')" = running ] || qm start $ROUTER
+    [ "$(qm status $ID | awk '{print $2}')" = running ] || qm start $ID || exit 1
+    stop_timer
+    systemd-run --quiet --unit=$UNIT --on-active=${H}h /usr/sbin/qm stop $ID
+    echo "started; will force-stop in ${H}h" ;;
+  stop)  stop_timer; qm stop $ID ;;
+  reset) stop_timer; qm stop $ID 2>/dev/null; qm rollback $ID clean && echo "rolled back to clean; still stopped" ;;
+  console) exec qm terminal $ID ;;
+  bridge) # Relays bytes to the tool port (serial1) for the portal. It does not read them.
+    [ "$(qm status $ID | awk '{print $2}')" = running ] || { echo "sandbox is not running" >&2; exit 3; }
+    exec socat - UNIX-CONNECT:/var/run/qemu-server/$ID.serial1 ;;
+  status) qm status $ID; systemctl list-timers $UNIT.timer --no-pager --no-legend ;;
+  *) echo "usage: llm-sandbox start [hours, default 2] | stop | reset | console | status | bridge"; exit 1 ;;
+esac
