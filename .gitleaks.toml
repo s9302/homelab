@@ -1,0 +1,14 @@
+# gitleaks config: the default rules plus allowlists for findings reviewed as not secret.
+# Patterns, not fingerprints, so they still match after the public copy's history rewrite.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Forgejo's public GPG release-key fingerprint, used to verify downloads"
+regexTarget = "line"
+regexes = ['''^KEY=EB114F5E6C0DC2BCDD183550A4B61A2DC5923710$''']
+
+[[allowlists]]
+description = "Authentik blueprint: UUID references to keypairs/flows (key material was filtered out of the export)"
+regexTarget = "line"
+regexes = ['''^\s*(signing_key|flow_authentication): [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$''']
