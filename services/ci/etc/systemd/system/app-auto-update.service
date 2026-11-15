@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly forgejo-runner auto-update (same major, GPG-verified)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/runner-auto-update
+TimeoutStartSec=70min

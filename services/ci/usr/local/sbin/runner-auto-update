@@ -1,0 +1,45 @@
+#!/bin/bash
+# Weekly forgejo-runner update (homelab, 2026-11-15). Single binary at
+# /usr/local/bin/forgejo-runner from code.forgejo.org releases, no apt repo.
+# Same major only, GPG-verified against the Forgejo release key, waits for no
+# job to be running, swaps, and rolls back if the service doesn't stay up.
+set -uo pipefail
+export LC_ALL=C
+KEY=EB114F5E6C0DC2BCDD183550A4B61A2DC5923710
+BIN=/usr/local/bin/forgejo-runner
+note() { /usr/local/sbin/homelab-notify "$*"; echo "$*"; }
+
+cur=$($BIN --version | awk '{print $3}' | sed 's/^v//')
+major=${cur%%.*}
+latest=$(curl -fsS -m 30 'https://code.forgejo.org/api/v1/repos/forgejo/runner/releases?limit=50' | python3 -c "
+import json,sys
+vs=[r['tag_name'].lstrip('v') for r in json.load(sys.stdin) if not r['prerelease'] and not r['draft']]
+vs=[v for v in vs if v.split('.')[0]=='$major' and all(p.isdigit() for p in v.split('.'))]
+print(max(vs,key=lambda v:tuple(map(int,v.split('.')))) if vs else '')")
+[ -n "$latest" ] || { note "forgejo-runner auto-update: could not read releases"; exit 1; }
+[ "$cur" = "$latest" ] && { echo "forgejo-runner $cur is current"; exit 0; }
+[ "$(printf '%s\n%s\n' "$cur" "$latest" | sort -V | tail -1)" = "$latest" ] || exit 0
+
+T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+U=https://code.forgejo.org/forgejo/runner/releases/download/v$latest/forgejo-runner-$latest-linux-amd64
+curl -fsSL -m 600 -o "$T/r" "$U" && curl -fsSL -m 60 -o "$T/r.asc" "$U.asc" || { note "forgejo-runner $latest download failed"; exit 1; }
+gpg --batch --status-fd 1 --verify "$T/r.asc" "$T/r" 2>/dev/null | grep -qE "^\[GNUPG:\] VALIDSIG .*$KEY\$|^\[GNUPG:\] VALIDSIG $KEY " \
+  || { note "forgejo-runner $latest GPG signature check FAILED, not installing"; exit 1; }
+chmod 755 "$T/r"
+"$T/r" --version | grep -q "v$latest" || { note "forgejo-runner $latest binary reports wrong version"; exit 1; }
+
+# don't cut a running CI job short: wait up to 50 min for job containers to finish
+for _ in $(seq 100); do [ -z "$(docker ps -q --filter label=forgejo-runner 2>/dev/null; docker ps -q --filter name=FORGEJO-ACTIONS 2>/dev/null)" ] && break; sleep 30; done
+
+cp -a "$BIN" "$BIN.prev"
+install -m 755 -o root -g root "$T/r" "$BIN"
+systemctl restart forgejo-runner
+sleep 30
+if systemctl is-active -q forgejo-runner && ! journalctl -u forgejo-runner --since "-40s" --no-pager | grep -qiE 'fatal|panic'; then
+  note "forgejo-runner auto-update OK: $cur -> $latest (signature verified)"
+  exit 0
+fi
+cp -a "$BIN.prev" "$BIN"; systemctl restart forgejo-runner; sleep 10
+systemctl is-active -q forgejo-runner && st="running again" || st="STILL DOWN"
+note "forgejo-runner auto-update $cur -> $latest FAILED; ROLLED BACK to $cur ($st)"
+exit 1

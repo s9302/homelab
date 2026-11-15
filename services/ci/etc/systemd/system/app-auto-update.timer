@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly app auto-update (forgejo-runner), Sunday 05:50 Denver
+
+[Timer]
+OnCalendar=Sun *-*-* 05:50:00 America/Denver
+Persistent=true
+
+[Install]
+WantedBy=timers.target
