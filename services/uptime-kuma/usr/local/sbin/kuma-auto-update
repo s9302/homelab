@@ -1,0 +1,53 @@
+#!/bin/bash
+# Weekly Uptime Kuma update (homelab, 2026-11-15). Kuma runs from a git checkout
+# (/opt/uptime-kuma-src, owned by user kuma) with data in /opt/uptime-kuma/data.
+# Moves to the newest stable 2.x tag, following upstream's non-Docker steps
+# (git checkout <tag>; npm ci --omit dev; npm run download-dist). Backs up kuma.db
+# first and restores tag + DB if the UI doesn't come back.
+set -uo pipefail
+export LC_ALL=C
+SRC=/opt/uptime-kuma-src; DATA=/opt/uptime-kuma/data; BK=/opt/uptime-kuma/update-backups
+note() { /usr/local/sbin/homelab-notify "$*"; echo "$*"; }
+k() { runuser -u kuma -- env HOME=/var/tmp/kuma-home npm_config_cache=/var/tmp/kuma-home/.npm "$@"; }
+mkdir -p /var/tmp/kuma-home && chown kuma:kuma /var/tmp/kuma-home
+cd "$SRC" || exit 1
+
+cur=$(k git describe --tags --exact-match 2>/dev/null) || { note "kuma auto-update: checkout is not on a release tag, not touching it"; exit 1; }
+k git fetch --tags -q || { note "kuma auto-update: git fetch failed"; exit 1; }
+latest=$(k git tag -l '2.*' | grep -E '^2\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+[ -n "$latest" ] || exit 1
+if [ "$cur" = "$latest" ]; then echo "uptime-kuma $cur is current"; exit 0; fi
+
+install_tag() {
+  k git checkout -q --force "$1" && k npm ci --omit=dev --no-audit --no-fund --loglevel=error && k npm run -s download-dist
+}
+up() {
+  for _ in $(seq 36); do
+    sleep 5
+    c=$(curl -s -o /dev/null -w '%{http_code}' -m 5 http://127.0.0.1:3001/)
+    [[ "$c" =~ ^(200|302)$ ]] && systemctl is-active -q uptime-kuma && return 0
+  done
+  return 1
+}
+
+systemctl stop uptime-kuma
+rm -rf "$BK/$cur"; mkdir -p "$BK/$cur"; chmod 700 "$BK"
+cp -a "$DATA"/kuma.db* "$BK/$cur/" || { systemctl start uptime-kuma; note "kuma auto-update: DB backup failed, aborted"; exit 1; }
+
+if install_tag "$latest"; then
+  systemctl start uptime-kuma
+  if up; then
+    ls -1t "$BK" | tail -n +4 | while read -r d; do rm -rf "$BK/$d"; done
+    note "uptime-kuma auto-update OK: $cur -> $latest (DB backup in $BK/$cur)"
+    exit 0
+  fi
+fi
+
+# roll back
+systemctl stop uptime-kuma
+install_tag "$cur"
+cp -a "$BK/$cur"/kuma.db* "$DATA/"
+systemctl start uptime-kuma
+if up; then st="healthy again"; else st="STILL DOWN, needs attention now"; fi
+note "uptime-kuma auto-update $cur -> $latest FAILED; ROLLED BACK to $cur ($st)"
+exit 1

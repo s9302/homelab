@@ -1,0 +1,59 @@
+#!/bin/bash
+# compose-auto-update DIR HEALTH_URL [--build]
+# Weekly app update for a Docker Compose stack (homelab, 2026-11-15).
+#  1. remember the image ID behind every image the stack uses
+#  2. pull (and with --build: rebuild with --pull) the images
+#  3. if nothing changed, stop; otherwise `up -d`
+#  4. wait up to 5 min for HEALTH_URL to return 2xx/3xx/401 and no container unhealthy/restarting
+#  5. on failure, re-tag the old image IDs, `up -d` again, and report the rollback
+# Tags in the compose file decide how far it may move (e.g. romm:5, mariadb:13.0, authentik 2026.8).
+set -uo pipefail
+export LC_ALL=C
+DIR=$1; URL=$2; BUILD=${3:-}
+cd "$DIR" || exit 1
+NAME=$(basename "$DIR")
+note() { /usr/local/sbin/homelab-notify "$*"; echo "$*"; }
+
+mapfile -t IMAGES < <(docker compose config --images | sort -u)
+declare -A OLD
+for i in "${IMAGES[@]}"; do OLD[$i]=$(docker image inspect -f '{{.Id}}' "$i" 2>/dev/null || echo none); done
+
+if ! docker compose pull -q --ignore-buildable 2>&1; then note "$NAME auto-update: docker compose pull FAILED, nothing changed"; exit 1; fi
+if [ "$BUILD" = --build ]; then
+  if ! docker compose build --pull -q 2>&1; then note "$NAME auto-update: build FAILED, nothing changed"; exit 1; fi
+fi
+
+CHANGED=()
+for i in "${IMAGES[@]}"; do
+  new=$(docker image inspect -f '{{.Id}}' "$i" 2>/dev/null || echo none)
+  [ "$new" != "${OLD[$i]}" ] && CHANGED+=("$i")
+done
+if [ ${#CHANGED[@]} -eq 0 ]; then echo "$NAME: all images current"; exit 0; fi
+
+healthy() {
+  for _ in $(seq 30); do
+    sleep 10
+    code=$(curl -s -o /dev/null -w '%{http_code}' -m 10 "$URL")
+    bad=$(docker compose ps --format '{{.Status}}' | grep -ciE 'unhealthy|restarting|exited|starting')
+    if [[ "$code" =~ ^(2..|3..|401)$ ]] && [ "$bad" = 0 ]; then return 0; fi
+  done
+  echo "health: http=$code bad_containers=$bad"; return 1
+}
+
+docker compose up -d --remove-orphans 2>&1 | tail -5
+if healthy; then
+  ver=$(for i in "${CHANGED[@]}"; do v=$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.version"}}' "$i" 2>/dev/null); echo -n "$i${v:+ ($v)}, "; done)
+  docker image prune -f >/dev/null
+  note "$NAME auto-update OK: ${ver%, }"
+  exit 0
+fi
+
+# roll back
+for i in "${CHANGED[@]}"; do [ "${OLD[$i]}" != none ] && docker tag "${OLD[$i]}" "$i"; done
+docker compose up -d --remove-orphans 2>&1 | tail -5
+if healthy; then
+  note "$NAME auto-update FAILED health check after updating ${CHANGED[*]}; ROLLED BACK to previous images (healthy again). Check before next Sunday."
+else
+  note "$NAME auto-update FAILED and ROLLBACK ALSO UNHEALTHY. Needs attention now. Images: ${CHANGED[*]}"
+fi
+exit 1

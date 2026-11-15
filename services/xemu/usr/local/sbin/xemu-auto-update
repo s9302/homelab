@@ -1,0 +1,49 @@
+#!/bin/bash
+# Weekly xemu VM app update (homelab, 2026-11-15): the xemu Flatpak (system) and
+# Sunshine (.deb from GitHub releases, not in any apt repo). Skips while xemu is
+# running, like reboot-if-idle. Sunshine debs are kept in /var/cache/sunshine-debs
+# (last 2) so a bad release can be rolled back by reinstalling the previous one.
+set -uo pipefail
+export LC_ALL=C
+note() { /usr/local/sbin/homelab-notify "$*"; echo "$*"; }
+if pgrep -x xemu >/dev/null; then echo "xemu is running, skipping this week"; exit 0; fi
+
+msgs=()
+# --- xemu flatpak (+ runtimes)
+fb=$(flatpak list --app --columns=application,version | grep app.xemu.xemu | awk '{print $2}')
+if ! fo=$(flatpak update -y --noninteractive --system 2>&1); then note "xemu flatpak update FAILED: $(echo "$fo" | tail -2 | tr '\n' ' ')"; fi
+fa=$(flatpak list --app --columns=application,version | grep app.xemu.xemu | awk '{print $2}')
+[ "$fb" != "$fa" ] && msgs+=("xemu flatpak $fb -> $fa")
+flatpak uninstall -y --noninteractive --unused --system >/dev/null 2>&1
+
+# --- Sunshine
+REPO=SunshineStream/Sunshine
+tag=$(curl -fsSIL -m 30 https://github.com/$REPO/releases/latest | grep -i '^location:.*/tag/' | tail -1 | sed 's|.*/tag/||' | tr -d '\r')
+new=${tag#v}
+cur=$(dpkg-query -W -f='${Version}' sunshine 2>/dev/null | cut -d- -f1)
+C=/var/cache/sunshine-debs; mkdir -p $C
+if [ -n "$new" ] && [ -n "$cur" ] && [ "$new" != "$cur" ] && [ "$(printf '%s\n%s\n' "$cur" "$new" | sort -V | tail -1)" = "$new" ]; then
+  deb="$C/sunshine_${new}-1+ubuntu24.04_amd64.deb"
+  if curl -fsSL -m 600 -o "$deb.part" "https://github.com/$REPO/releases/download/$tag/$(basename "$deb")" \
+     && [ "$(dpkg-deb -f "$deb.part" Package)" = sunshine ] && dpkg-deb -f "$deb.part" Version | grep -q "^$new"; then
+    mv "$deb.part" "$deb"
+    if DEBIAN_FRONTEND=noninteractive apt-get install -y -q "$deb" >/dev/null 2>&1; then
+      systemctl --user -M spencer@ restart sunshine 2>/dev/null
+      sleep 15
+      if pgrep -x sunshine >/dev/null; then
+        msgs+=("sunshine $cur -> $new")
+      else
+        prev=$(ls -1t $C/*.deb 2>/dev/null | grep -v "$new" | head -1)
+        if [ -n "$prev" ]; then apt-get install -y -q --allow-downgrades "$prev" >/dev/null 2>&1; systemctl --user -M spencer@ restart sunshine 2>/dev/null; fi
+        note "sunshine $new did not start; rolled back to ${prev:-<no cached deb>}"
+      fi
+    else
+      note "sunshine $new install FAILED (apt), still on $cur"
+    fi
+  else
+    rm -f "$deb.part"; note "sunshine $new download/verify FAILED, still on $cur"
+  fi
+fi
+ls -1t $C/*.deb 2>/dev/null | tail -n +3 | xargs -r rm -f
+[ ${#msgs[@]} -gt 0 ] && note "xemu auto-update OK: ${msgs[*]}"
+exit 0

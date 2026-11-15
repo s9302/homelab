@@ -1,0 +1,20 @@
+#!/bin/bash
+# Weekly Pi-hole update (homelab, 2026-11-15) with upstream's own updater.
+# Pi-hole is the tailnet's first DNS server (1.1.1.1 is the fallback), so check
+# DNS and the web UI afterwards and shout if either is broken. No automatic
+# rollback: the nightly vzdump of LXC 200 is the way back.
+set -uo pipefail
+export LC_ALL=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+note() { /usr/local/sbin/homelab-notify "$*"; echo "$*"; }
+ver() { pihole version 2>/dev/null | grep -oE '(Core|Web|FTL) version is v[0-9.]+' | awk '{print $1" "$4}' | tr '\n' ' '; }
+before=$(ver)
+out=$(pihole -up 2>&1); rc=$?
+after=$(ver)
+sleep 5
+dns=$(dig +short +time=3 +tries=2 example.com @127.0.0.1 | head -1)
+web=$(curl -s -o /dev/null -w '%{http_code}' -m 10 http://127.0.0.1:8080/admin/)
+if [ $rc -ne 0 ] || [ -z "$dns" ] || ! [[ "$web" =~ ^(200|302)$ ]]; then
+  note "pihole auto-update PROBLEM: rc=$rc dns='${dns:-none}' web=$web before=[$before] after=[$after]; last output: $(echo "$out" | tail -3)"
+  exit 1
+fi
+if [ "$before" != "$after" ]; then note "pihole auto-update OK: [$before] -> [$after]"; else echo "pihole current: $after"; fi

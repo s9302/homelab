@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly Vaultwarden auto-update (official image binary + web-vault)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vaultwarden-auto-update
+TimeoutStartSec=30min

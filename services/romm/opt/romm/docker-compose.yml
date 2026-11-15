@@ -3,7 +3,7 @@
 # bind mounts under /opt/romm, library bind-mounted from the LXC's /library.
 services:
   romm:
-    image: rommapp/romm:latest
+    image: rommapp/romm:5
     container_name: romm
     restart: unless-stopped
     environment:
@@ -42,18 +42,19 @@ services:
       - /opt/romm/assets:/romm/assets # Uploaded saves, states, etc.
       - /opt/romm/config:/romm/config # config.yml
     ports:
-      - 80:8080
+      - 127.0.0.1:80:8080
     depends_on:
       romm-db:
         condition: service_healthy
         restart: true
 
   romm-db:
-    image: mariadb:latest
+    image: mariadb:13.0
     container_name: romm-db
     restart: unless-stopped
     environment:
       - MARIADB_ROOT_PASSWORD=${MARIADB_ROOT_PASSWORD}
+      - MARIADB_AUTO_UPGRADE=1
       - MARIADB_DATABASE=romm
       - MARIADB_USER=romm-user
       - MARIADB_PASSWORD=${DB_PASSWD}

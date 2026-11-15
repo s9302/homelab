@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly app auto-update (xemu flatpak + sunshine), Sunday 05:40 Denver
+
+[Timer]
+OnCalendar=Sun *-*-* 05:40:00 America/Denver
+Persistent=true
+
+[Install]
+WantedBy=timers.target

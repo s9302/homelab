@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly app auto-update (wizard-academy: rebuild on fresh node/caddy/postgres base images)
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/compose-auto-update /home/spencer/wizard-academy http://127.0.0.1:8081/ --build
+TimeoutStartSec=45min

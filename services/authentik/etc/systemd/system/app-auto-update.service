@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly app auto-update (authentik)
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/compose-auto-update /opt/authentik http://127.0.0.1:9000/-/health/ready/
+TimeoutStartSec=45min

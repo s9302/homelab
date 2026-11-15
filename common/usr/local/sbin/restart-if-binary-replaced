@@ -1,0 +1,13 @@
+#!/bin/sh
+# Called by apt (DPkg::Post-Invoke). Restarts each named service whose main
+# process is still running a binary that an upgrade replaced (e.g. node after a
+# NodeSource update). Packages like nodejs don't restart their dependents.
+for svc in "$@"; do
+  pid=$(systemctl show -p MainPID --value "$svc" 2>/dev/null)
+  [ -n "$pid" ] && [ "$pid" != 0 ] || continue
+  if readlink "/proc/$pid/exe" | grep -q deleted; then
+    logger -t restart-if-binary-replaced "restarting $svc (binary replaced)"
+    systemctl restart "$svc"
+  fi
+done
+exit 0

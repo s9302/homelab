@@ -1,0 +1,143 @@
+#!/usr/bin/python3 -I
+"""Weekly Vaultwarden update (homelab, 2026-11-15).
+
+Vaultwarden here is the binary + web-vault taken out of the official
+vaultwarden/server image (Debian variant), run by systemd as user vaultwarden.
+This script:
+  1. reads the latest GitHub release; stops if we're on it or it's a new major
+  2. downloads vaultwarden/server:<ver> linux/amd64 from Docker Hub, checking every
+     layer's sha256 against the manifest, and extracts /vaultwarden + /web-vault
+  3. checks the new binary reports <ver>
+  4. stops the service, backs up bin, web-vault and data/db.sqlite3*, swaps, starts
+  5. waits for http://127.0.0.1:8000/alive; on failure restores the backup
+Backups: /opt/vaultwarden/update-backups/<old-version>/ (last 3 kept).
+"""
+import hashlib, json, os, shutil, subprocess, sys, tarfile, tempfile, time, urllib.request
+
+BASE = "/opt/vaultwarden"
+REPO = "vaultwarden/server"
+UA = {"User-Agent": "homelab-vaultwarden-updater"}
+
+
+def note(msg):
+    print(msg)
+    subprocess.run(["/usr/local/sbin/homelab-notify", msg])
+
+
+def get(url, headers=None):
+    return urllib.request.urlopen(urllib.request.Request(url, headers={**UA, **(headers or {})}), timeout=120)
+
+
+def current_version():
+    out = subprocess.run([f"{BASE}/bin/vaultwarden", "--version"], capture_output=True, text=True).stdout
+    return out.split()[1]  # "Vaultwarden 1.37.2"
+
+
+def alive(timeout=120):
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            if get("http://127.0.0.1:8000/alive").status == 200:
+                return True
+        except Exception:
+            pass
+        time.sleep(3)
+    return False
+
+
+def fetch_image(tag, dest):
+    tok = json.load(get(f"https://auth.docker.io/token?service=registry.docker.io&scope=repository:{REPO}:pull"))["token"]
+    auth = {"Authorization": f"Bearer {tok}"}
+    idx_types = "application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json"
+    man_types = "application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json"
+    idx = json.load(get(f"https://registry-1.docker.io/v2/{REPO}/manifests/{tag}", {**auth, "Accept": idx_types + "," + man_types}))
+    if "manifests" in idx:
+        d = next(m["digest"] for m in idx["manifests"]
+                 if m.get("platform", {}).get("os") == "linux" and m["platform"].get("architecture") == "amd64")
+        man = json.load(get(f"https://registry-1.docker.io/v2/{REPO}/manifests/{d}", {**auth, "Accept": man_types}))
+    else:
+        man = idx
+    for layer in man["layers"]:
+        path = os.path.join(dest, "layer.tar")
+        h = hashlib.sha256()
+        with get(f"https://registry-1.docker.io/v2/{REPO}/blobs/{layer['digest']}", auth) as r, open(path, "wb") as f:
+            while chunk := r.read(1 << 20):
+                h.update(chunk)
+                f.write(chunk)
+        if "sha256:" + h.hexdigest() != layer["digest"]:
+            raise RuntimeError(f"layer digest mismatch {layer['digest']}")
+        with tarfile.open(path) as t:
+            for m in t.getmembers():
+                name = m.name.lstrip("./")
+                if (name == "vaultwarden" or name == "web-vault" or name.startswith("web-vault/")) and not os.path.basename(name).startswith(".wh."):
+                    t.extract(m, os.path.join(dest, "img"), filter="data")
+        os.remove(path)
+    img = os.path.join(dest, "img")
+    if not os.path.isfile(f"{img}/vaultwarden") or not os.path.isdir(f"{img}/web-vault"):
+        raise RuntimeError("image did not contain /vaultwarden and /web-vault")
+    return img
+
+
+def main():
+    latest = json.load(get("https://api.github.com/repos/dani-garcia/vaultwarden/releases/latest"))["tag_name"].lstrip("v")
+    cur = current_version()
+    if latest == cur:
+        print(f"vaultwarden {cur} is current")
+        return 0
+    if latest.split(".")[0] != cur.split(".")[0]:
+        note(f"vaultwarden {latest} is a new major version (running {cur}); not auto-updating, do it by hand")
+        return 0
+    with tempfile.TemporaryDirectory(dir="/var/tmp") as tmp:
+        img = fetch_image(latest, tmp)
+        os.chmod(f"{img}/vaultwarden", 0o755)
+        got = subprocess.run([f"{img}/vaultwarden", "--version"], capture_output=True, text=True).stdout.split()
+        if len(got) < 2 or got[1] != latest:
+            raise RuntimeError(f"new binary reports {got!r}, expected {latest}")
+
+        bdir = f"{BASE}/update-backups/{cur}"
+        subprocess.run(["systemctl", "stop", "vaultwarden"], check=True)
+        try:
+            shutil.rmtree(bdir, ignore_errors=True)
+            os.makedirs(f"{bdir}/data", mode=0o700)
+            shutil.copy2(f"{BASE}/bin/vaultwarden", f"{bdir}/vaultwarden")
+            shutil.copytree(f"{BASE}/web-vault", f"{bdir}/web-vault", symlinks=True)
+            for f in os.listdir(f"{BASE}/data"):
+                if f.startswith("db.sqlite3"):
+                    shutil.copy2(f"{BASE}/data/{f}", f"{bdir}/data/{f}")
+            shutil.copy2(f"{img}/vaultwarden", f"{BASE}/bin/vaultwarden.new")
+            os.chown(f"{BASE}/bin/vaultwarden.new", 0, 0)
+            os.replace(f"{BASE}/bin/vaultwarden.new", f"{BASE}/bin/vaultwarden")
+            shutil.rmtree(f"{BASE}/web-vault.new", ignore_errors=True)
+            shutil.copytree(f"{img}/web-vault", f"{BASE}/web-vault.new", symlinks=True)
+            shutil.rmtree(f"{BASE}/web-vault")
+            os.rename(f"{BASE}/web-vault.new", f"{BASE}/web-vault")
+        finally:
+            subprocess.run(["systemctl", "start", "vaultwarden"])
+        if alive():
+            # keep the 3 newest backups
+            olds = sorted(os.listdir(f"{BASE}/update-backups"), key=lambda d: os.path.getmtime(f"{BASE}/update-backups/{d}"))
+            for d in olds[:-3]:
+                shutil.rmtree(f"{BASE}/update-backups/{d}", ignore_errors=True)
+            note(f"vaultwarden auto-update OK: {cur} -> {latest} (backup in {bdir})")
+            return 0
+        # roll back
+        subprocess.run(["systemctl", "stop", "vaultwarden"])
+        shutil.copy2(f"{bdir}/vaultwarden", f"{BASE}/bin/vaultwarden")
+        shutil.rmtree(f"{BASE}/web-vault")
+        shutil.copytree(f"{bdir}/web-vault", f"{BASE}/web-vault", symlinks=True)
+        for f in os.listdir(f"{bdir}/data"):
+            shutil.copy2(f"{bdir}/data/{f}", f"{BASE}/data/{f}")
+        subprocess.run(["chown", "-R", "vaultwarden:vaultwarden", f"{BASE}/data"])
+        subprocess.run(["systemctl", "start", "vaultwarden"])
+        state = "healthy again" if alive() else "STILL DOWN, needs attention now"
+        note(f"vaultwarden auto-update {cur} -> {latest} FAILED health check; ROLLED BACK to {cur} ({state})")
+        return 1
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception as e:
+        note(f"vaultwarden auto-update error, nothing swapped unless noted above: {e}")
+        subprocess.run(["systemctl", "start", "vaultwarden"])
+        sys.exit(1)

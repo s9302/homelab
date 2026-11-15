@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly xemu VM app auto-update (xemu flatpak + Sunshine, skips while playing)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/xemu-auto-update
+TimeoutStartSec=30min

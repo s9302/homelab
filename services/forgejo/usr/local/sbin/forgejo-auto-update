@@ -1,0 +1,52 @@
+#!/bin/bash
+# Weekly Forgejo update (homelab, 2026-11-15). Forgejo is a single binary at
+# /usr/local/bin/forgejo with no apt repo. Moves to the newest release in the SAME
+# major series only (majors can carry breaking changes), verifies the GPG
+# signature against the Forgejo release key, backs up binary + SQLite DB,
+# swaps, and rolls back if /api/healthz fails.
+set -uo pipefail
+export LC_ALL=C
+KEY=EB114F5E6C0DC2BCDD183550A4B61A2DC5923710
+BIN=/usr/local/bin/forgejo; DB=/var/lib/forgejo/data/forgejo.db; BK=/var/lib/forgejo/update-backups
+note() { /usr/local/sbin/homelab-notify "$*"; echo "$*"; }
+
+cur=$($BIN --version | awk '{print $3}' | cut -d+ -f1)
+major=${cur%%.*}
+latest=$(curl -fsS -m 30 'https://codeberg.org/api/v1/repos/forgejo/forgejo/releases?limit=50' | python3 -c "
+import json,sys
+vs=[r['tag_name'].lstrip('v') for r in json.load(sys.stdin) if not r['prerelease'] and not r['draft']]
+vs=[v for v in vs if v.split('.')[0]=='$major' and all(p.isdigit() for p in v.split('.'))]
+print(max(vs,key=lambda v:tuple(map(int,v.split('.')))) if vs else '')")
+[ -n "$latest" ] || { note "forgejo auto-update: could not read releases"; exit 1; }
+if [ "$cur" = "$latest" ]; then echo "forgejo $cur is current"; exit 0; fi
+newer=$(printf '%s\n%s\n' "$cur" "$latest" | sort -V | tail -1)
+[ "$newer" = "$latest" ] || { echo "forgejo $cur is newer than $latest"; exit 0; }
+
+T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+U=https://codeberg.org/forgejo/forgejo/releases/download/v$latest/forgejo-$latest-linux-amd64
+curl -fsSL -m 600 -o "$T/forgejo" "$U" && curl -fsSL -m 60 -o "$T/forgejo.asc" "$U.asc" \
+  || { note "forgejo auto-update: download of $latest failed"; exit 1; }
+if ! gpg --batch --status-fd 1 --verify "$T/forgejo.asc" "$T/forgejo" 2>/dev/null | grep -qE "^\[GNUPG:\] VALIDSIG .*$KEY\$|^\[GNUPG:\] VALIDSIG $KEY "; then
+  note "forgejo auto-update: GPG signature check FAILED for $latest, not installing"; exit 1
+fi
+chmod 755 "$T/forgejo"
+"$T/forgejo" --version | grep -q " $latest" || { note "forgejo auto-update: new binary doesn't report $latest"; exit 1; }
+
+health() { for _ in $(seq 30); do sleep 4; [ "$(curl -s -o /dev/null -w '%{http_code}' -m 5 http://127.0.0.1:3000/api/healthz)" = 200 ] && return 0; done; return 1; }
+
+systemctl stop forgejo
+rm -rf "$BK/$cur"; mkdir -p "$BK/$cur"; chmod 700 "$BK"
+cp -a "$BIN" "$BK/$cur/forgejo" && cp -a "$DB"* "$BK/$cur/" || { systemctl start forgejo; note "forgejo auto-update: backup failed, aborted"; exit 1; }
+install -m 755 -o root -g root "$T/forgejo" "$BIN"
+systemctl start forgejo
+if health; then
+  ls -1t "$BK" | tail -n +4 | while read -r d; do rm -rf "$BK/$d"; done
+  note "forgejo auto-update OK: $cur -> $latest (signature verified, backup in $BK/$cur)"
+  exit 0
+fi
+systemctl stop forgejo
+cp -a "$BK/$cur/forgejo" "$BIN"; cp -a "$BK/$cur"/forgejo.db* "$(dirname "$DB")/"
+systemctl start forgejo
+if health; then st="healthy again"; else st="STILL DOWN, needs attention now"; fi
+note "forgejo auto-update $cur -> $latest FAILED health check; ROLLED BACK to $cur ($st)"
+exit 1

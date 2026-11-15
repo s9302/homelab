@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly app auto-update (uptime-kuma), Sunday 05:25 Denver
+
+[Timer]
+OnCalendar=Sun *-*-* 05:25:00 America/Denver
+Persistent=true
+
+[Install]
+WantedBy=timers.target

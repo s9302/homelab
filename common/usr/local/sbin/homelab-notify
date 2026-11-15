@@ -1,0 +1,12 @@
+#!/bin/sh
+# homelab-notify "message"
+# Always logs to journald (tag homelab-notify, priority warning), which the Wazuh
+# agent ships to the manager. If /etc/homelab/discord-webhook (root 600) exists,
+# it also posts the message to that Discord webhook.
+logger -p user.warning -t homelab-notify "$*"
+f=/etc/homelab/discord-webhook
+[ -r "$f" ] || exit 0
+msg=$(printf '[%s] %s' "$(hostname)" "$*" | tr '\t\r' '  ' | head -c 1800 | sed 's/\\/\\\\/g; s/"/\\"/g' | awk '{printf "%s\\n", $0}')
+curl -fsS -m 20 -H 'Content-Type: application/json' -d "{\"content\":\"$msg\"}" "$(cat "$f")" >/dev/null \
+  || logger -t homelab-notify "discord post failed"
+exit 0

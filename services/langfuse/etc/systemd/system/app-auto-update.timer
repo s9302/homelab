@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly app auto-update (langfuse), Sunday 05:05 Denver
+
+[Timer]
+OnCalendar=Sun *-*-* 05:05:00 America/Denver
+Persistent=true
+
+[Install]
+WantedBy=timers.target

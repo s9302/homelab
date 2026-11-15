@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly app auto-update (wizard-academy), Sunday 05:15 Denver
+
+[Timer]
+OnCalendar=Sun *-*-* 05:15:00 America/Denver
+Persistent=true
+
+[Install]
+WantedBy=timers.target

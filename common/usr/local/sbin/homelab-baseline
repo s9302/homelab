@@ -1,0 +1,117 @@
+#!/bin/sh
+# Homelab hardened baseline (2026-11-15). Idempotent.
+#   baseline.sh fw6     - write+apply IPv6 tailnet-only policy only (hosts whose v4 is already done)
+#   baseline.sh fwall   - write+apply v4 + v6 tailnet-only policy (+ DOCKER-USER if docker present)
+#   baseline.sh ssh     - sshd hardening drop-in + fail2ban sshd jail
+# Live apply keeps Tailscale/Docker chains (only INPUT and DOCKER-USER are rebuilt).
+set -eu
+export LC_ALL=C LANG=C DEBIAN_FRONTEND=noninteractive
+STAMP=$(date +%Y%m%d-%H%M%S)
+WAN=$(ip route show default | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+[ -n "$WAN" ] || { echo "no default route iface"; exit 1; }
+HAS_DOCKER=0; command -v docker >/dev/null 2>&1 && HAS_DOCKER=1
+
+v4_rules() {
+cat <<EOF
+-A INPUT -i lo -j ACCEPT
+-A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+-A INPUT -i tailscale0 -j ACCEPT
+-A INPUT -p udp --dport 68 -j ACCEPT
+-A INPUT -p udp --dport 41641 -j ACCEPT
+-A INPUT -i $WAN -j DROP
+EOF
+}
+v6_rules() {
+cat <<EOF
+-A INPUT -i lo -j ACCEPT
+-A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+-A INPUT -i tailscale0 -j ACCEPT
+-A INPUT -p ipv6-icmp --icmpv6-type 133 -j ACCEPT
+-A INPUT -p ipv6-icmp --icmpv6-type 134 -j ACCEPT
+-A INPUT -p ipv6-icmp --icmpv6-type 135 -j ACCEPT
+-A INPUT -p ipv6-icmp --icmpv6-type 136 -j ACCEPT
+-A INPUT -p udp --dport 546 -j ACCEPT
+-A INPUT -p udp --dport 41641 -j ACCEPT
+-A INPUT -i $WAN -j DROP
+EOF
+}
+docker_rules() {
+cat <<EOF
+-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
+-A DOCKER-USER -i $WAN -j DROP
+-A DOCKER-USER -j RETURN
+EOF
+}
+
+ensure_persistent() {
+  if ! dpkg -l iptables-persistent 2>/dev/null | grep -q ^ii; then
+    echo "iptables-persistent iptables-persistent/autosave_v4 boolean false" | debconf-set-selections
+    echo "iptables-persistent iptables-persistent/autosave_v6 boolean false" | debconf-set-selections
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -q iptables-persistent >/dev/null
+  fi
+  mkdir -p /etc/iptables
+}
+
+# live: rebuild one chain, keep a leading ts-input jump if Tailscale owns one
+live_chain() { # $1=iptables|ip6tables $2=chain $3=rulesfile
+  T=$1; C=$2
+  $T -S $C >/dev/null 2>&1 || $T -N $C
+  HAD_TS=0; [ "$C" = INPUT ] && $T -S INPUT | grep -q -- '-j ts-input' && HAD_TS=1
+  $T -F $C
+  [ $HAD_TS = 1 ] && $T -A INPUT -j ts-input
+  while read -r line; do [ -n "$line" ] && eval "$T $line"; done < "$3"
+}
+
+do_fw() { # $1 = 4and6 | 6
+  ensure_persistent
+  iptables-save > /root/fw-backup-$STAMP.v4; ip6tables-save > /root/fw-backup-$STAMP.v6
+  v6_rules > /tmp/.r6
+  { echo '*filter'; echo ':INPUT ACCEPT [0:0]'; cat /tmp/.r6; echo COMMIT; } > /etc/iptables/rules.v6
+  live_chain ip6tables INPUT /tmp/.r6
+  if [ "$1" = 4and6 ]; then
+    v4_rules > /tmp/.r4
+    : > /tmp/.rd; [ $HAS_DOCKER = 1 ] && docker_rules > /tmp/.rd
+    { echo '*filter'; echo ':INPUT ACCEPT [0:0]'; [ $HAS_DOCKER = 1 ] && echo ':DOCKER-USER - [0:0]'; cat /tmp/.r4 /tmp/.rd; echo COMMIT; } > /etc/iptables/rules.v4
+    live_chain iptables INPUT /tmp/.r4
+    [ $HAS_DOCKER = 1 ] && live_chain iptables DOCKER-USER /tmp/.rd
+  fi
+  rm -f /tmp/.r4 /tmp/.r6 /tmp/.rd
+  systemctl enable netfilter-persistent >/dev/null 2>&1 || true
+  echo "fw applied ($1) wan=$WAN docker=$HAS_DOCKER backup=/root/fw-backup-$STAMP.*"
+}
+
+do_ssh() {
+  command -v sshd >/dev/null 2>&1 || { echo "no sshd, skip"; return 0; }
+  cat > /etc/ssh/sshd_config.d/00-homelab-hardening.conf <<'EOF'
+# Homelab baseline (2026-11-15). 00- so it wins over later drop-ins (first value wins).
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+PermitRootLogin prohibit-password
+X11Forwarding no
+EOF
+  mkdir -p /run/sshd; sshd -t
+  systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || systemctl restart ssh.socket 2>/dev/null || true
+  if ! command -v fail2ban-client >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -q fail2ban python3-systemd >/dev/null
+  fi
+  if [ ! -f /etc/fail2ban/jail.d/homelab-sshd.local ] && ! grep -qs '^\[sshd\]' /etc/fail2ban/jail.local; then
+    cat > /etc/fail2ban/jail.d/homelab-sshd.local <<'EOF'
+[sshd]
+enabled  = true
+backend  = systemd
+maxretry = 5
+findtime = 600
+bantime  = 3600
+EOF
+  fi
+  systemctl enable --now fail2ban >/dev/null 2>&1; systemctl restart fail2ban
+  sleep 2; echo "ssh: $(sshd -T | grep -E '^(passwordauthentication|permitrootlogin|x11forwarding) ' | tr '\n' ' ') f2b: $(fail2ban-client status | grep 'Jail list' | cut -d: -f2)"
+}
+
+case "${1:-}" in
+  fw6) do_fw 6 ;;
+  fwall) do_fw 4and6 ;;
+  ssh) do_ssh ;;
+  *) echo "usage: $0 fw6|fwall|ssh"; exit 2 ;;
+esac
