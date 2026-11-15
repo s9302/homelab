@@ -30,6 +30,7 @@
 		"langfuse":    "<langfuse-tailnet-ip>",
 		"auth":        "<auth-tailnet-ip>",
 		"cal":         "<cal-tailnet-ip>",
+		"git":         "<git-tailnet-ip>",
 
 		// Personal devices
 		"macbook":  "<macbook-tailnet-ip>",
@@ -86,6 +87,7 @@
 				"langfuse",
 				"auth",
 				"cal", // Planner (LXC 108): internet-facing via Cloudflare, Wazuh only
+				"git", // Forgejo (LXC 206)
 			],
 			"dst": ["wazuh:1514,1515"],
 		},
@@ -127,6 +129,7 @@
 				"pihole:53",
 				"monitor:3000",
 				"langfuse:443",
+				"git:443",
 			],
 		},
 
@@ -146,6 +149,7 @@
 				"nextcloud",
 				"uptime",
 				"wazuh",
+				"git",
 			],
 			"dst": ["auth:443"],
 		},
@@ -314,6 +318,40 @@
 				"nextcloud:443",
 				"pihole:53",
 			],
+		},
+		{
+			// Forgejo (LXC 206) holds every repo: Wazuh + Authentik only, nothing else.
+			"src":    "git",
+			"accept": ["wazuh:1514", "wazuh:1515", "auth:443"],
+			"deny": [
+				"auth:22",
+				"vaultwarden:22",
+				"vaultwarden:443",
+				"proxmox:22",
+				"proxmox:8006",
+				"sandbox:22",
+				"monitor:3000",
+				"web:22",
+				"nextcloud:443",
+				"cal:22",
+			],
+		},
+		{
+			"src":    "uptime",
+			"accept": ["git:443"],
+			"deny":   ["git:22", "git:2222"],
+		},
+		{
+			"src":    "macbook",
+			"accept": ["git:443", "git:2222", "git:22"],
+		},
+		{
+			"src":  "web",
+			"deny": ["git:443", "git:2222", "git:22"],
+		},
+		{
+			"src":  "game",
+			"deny": ["git:443", "git:2222", "git:22"],
 		},
 	],
 }
