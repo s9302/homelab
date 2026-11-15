@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly Wazuh stack auto-update (indexer, manager, dashboard, then agents via WPK)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/wazuh-stack-auto-update
+TimeoutStartSec=60min

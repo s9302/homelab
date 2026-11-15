@@ -31,6 +31,7 @@
 		"auth":        "<auth-tailnet-ip>",
 		"cal":         "<cal-tailnet-ip>",
 		"git":         "<git-tailnet-ip>",
+		"ci":          "<ci-tailnet-ip>",
 
 		// Personal devices
 		"macbook":  "<macbook-tailnet-ip>",
@@ -88,6 +89,7 @@
 				"auth",
 				"cal", // Planner (LXC 108): internet-facing via Cloudflare, Wazuh only
 				"git", // Forgejo (LXC 206)
+				"ci",  // Forgejo Actions runner (VM 207)
 			],
 			"dst": ["wazuh:1514,1515"],
 		},
@@ -130,6 +132,7 @@
 				"monitor:3000",
 				"langfuse:443",
 				"git:443",
+				"romm:443", // Kuma RomM monitor (2026-11-15)
 			],
 		},
 
@@ -152,6 +155,17 @@
 				"git",
 			],
 			"dst": ["auth:443"],
+		},
+
+		// === Forgejo Actions runner (VM 207 `ci`). ===
+		// Runs CI jobs (security scans) in Docker. It polls Forgejo for work and
+		// clones repos over HTTPS, so git:443 is the one service it needs.
+		// Not git:2222 (SSH push) and no SSH anywhere. Nothing may connect to it
+		// except Spencer's devices and the sandbox.
+		{
+			"action": "accept",
+			"src":    ["ci"],
+			"dst":    ["git:443"],
 		},
 
 		// === Claude Code management sandbox. ===
@@ -342,6 +356,12 @@
 			"deny":   ["git:22", "git:2222"],
 		},
 		{
+			// Kuma may check the RomM UI, never get a shell there.
+			"src":    "uptime",
+			"accept": ["romm:443"],
+			"deny":   ["romm:22"],
+		},
+		{
 			"src":    "macbook",
 			"accept": ["git:443", "git:2222", "git:22"],
 		},
@@ -352,6 +372,40 @@
 		{
 			"src":  "game",
 			"deny": ["git:443", "git:2222", "git:22"],
+		},
+		{
+			// CI runner executes repo code: Forgejo HTTPS + its Wazuh agent only.
+			"src":    "ci",
+			"accept": ["git:443", "wazuh:1514", "wazuh:1515"],
+			"deny": [
+				"git:22",
+				"git:2222",
+				"auth:443",
+				"vaultwarden:22",
+				"vaultwarden:443",
+				"proxmox:22",
+				"proxmox:8006",
+				"pve2:22",
+				"pve2:8006",
+				"sandbox:22",
+				"monitor:3000",
+				"web:22",
+				"nextcloud:443",
+				"pihole:53",
+				"langfuse:443",
+			],
+		},
+		{
+			"src":  "web",
+			"deny": ["ci:22"],
+		},
+		{
+			"src":  "git",
+			"deny": ["ci:22"],
+		},
+		{
+			"src":    "macbook",
+			"accept": ["ci:22"],
 		},
 	],
 }

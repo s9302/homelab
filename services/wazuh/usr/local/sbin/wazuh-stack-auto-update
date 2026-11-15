@@ -1,0 +1,83 @@
+#!/bin/bash
+# Wazuh all-in-one stack update (homelab, 2026-11-15). Run weekly by
+# app-auto-update.timer, or by hand. Same major version only.
+# Order follows Wazuh's "upgrading central components" guide:
+#   indexer (allocation=primaries, flush, upgrade, wait, allocation back on)
+#   -> manager + filebeat alerts template -> dashboard
+# Existing config files are kept (--force-confold: SSO settings live in them).
+# Then every agent that is older than the manager is upgraded through the
+# manager's own WPK channel (agent_upgrade), so agents never pass the manager.
+# The agent packages stay apt-held on each host so apt never moves them on its own.
+# Rollback: Proxmox snapshot of VM 102 (taken by hand before big moves) or vzdump.
+set -uo pipefail
+export LC_ALL=C DEBIAN_FRONTEND=noninteractive
+note() { /usr/local/sbin/homelab-notify "$*"; echo "$*"; }
+C=(--cert /etc/wazuh-indexer/certs/admin.pem --key /etc/wazuh-indexer/certs/admin-key.pem --cacert /etc/wazuh-indexer/certs/root-ca.pem -s -m 30)
+IX=https://127.0.0.1:9200
+J=(-H 'Content-Type: application/json')
+APT=(apt-get install -y -q -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef)
+
+agents_upgrade() {
+  local outdated ids
+  outdated=$(/var/ossec/bin/agent_upgrade -l 2>/dev/null | awk '$1 ~ /^[0-9]+$/ {print $1}')
+  [ -z "$outdated" ] && return 0
+  ids=$(echo "$outdated" | paste -sd' ' -)
+  # -a takes space-separated IDs; the tool waits for each agent's result
+  # shellcheck disable=SC2086
+  /var/ossec/bin/agent_upgrade -a $ids 2>&1 | grep -iE 'upgraded|error|fail' | grep -vi starlette
+  sleep 60
+  left=$(/var/ossec/bin/agent_upgrade -l 2>/dev/null | awk '$1 ~ /^[0-9]+$/ {print $1" "$2}' | paste -sd' ' -)
+  if [ -n "$left" ]; then note "wazuh agents still outdated after WPK upgrade: $left"; else note "wazuh agents upgraded via WPK: $ids"; fi
+}
+
+apt-get update -qq
+v() { dpkg-query -W -f='${Version}' "$1"; }
+cur=$(v wazuh-manager)
+cand=$(apt-cache policy wazuh-manager | awk '/Candidate:/{print $2}')
+# each component is checked on its own, so a run that stopped half way resumes
+if [ "$(v wazuh-indexer)" = "$cand" ] && [ "$cur" = "$cand" ] && [ "$(v wazuh-dashboard)" = "$cand" ]; then echo "wazuh stack $cur is current"; agents_upgrade; exit 0; fi
+if [ "${cur%%.*}" != "${cand%%.*}" ]; then note "wazuh $cand is a new major (running $cur); not auto-updating"; exit 0; fi
+for p in wazuh-indexer wazuh-dashboard; do
+  apt-cache madison $p | grep -q " $cand " || { note "wazuh $cand: $p not published yet, waiting a week"; exit 0; }
+done
+ver=${cand%-*}
+
+fail() { note "wazuh stack upgrade $cur -> $cand FAILED at: $*. Check it; VM 102 snapshot/vzdump is the way back."; exit 1; }
+
+# --- indexer
+systemctl stop filebeat wazuh-dashboard
+if [ "$(v wazuh-indexer)" != "$cand" ]; then
+curl "${C[@]}" "${J[@]}" -X PUT $IX/_cluster/settings -d '{"persistent":{"cluster.routing.allocation.enable":"primaries"}}' >/dev/null
+curl "${C[@]}" -X POST $IX/_flush >/dev/null
+systemctl stop wazuh-indexer
+"${APT[@]}" wazuh-indexer="$cand" >/dev/null || fail "indexer package"
+systemctl daemon-reload; systemctl start wazuh-indexer
+for _ in $(seq 60); do sleep 5; s=$(curl "${C[@]}" $IX/_cluster/health | grep -oE '"status":"[a-z]+"'); [[ "$s" =~ green|yellow ]] && break; done
+[[ "${s:-}" =~ green|yellow ]] || fail "indexer did not come back (health: ${s:-none})"
+curl "${C[@]}" "${J[@]}" -X PUT $IX/_cluster/settings -d '{"persistent":{"cluster.routing.allocation.enable":null}}' >/dev/null
+fi
+
+# --- manager + filebeat template
+if [ "$(v wazuh-manager)" != "$cand" ]; then
+  "${APT[@]}" wazuh-manager="$cand" >/dev/null || fail "manager package"
+  systemctl restart wazuh-manager
+  sleep 20
+fi
+# capture first: grep -q closing the pipe early made wazuh-control fail under pipefail
+st=$(/var/ossec/bin/wazuh-control status 2>&1)
+grep -q 'wazuh-analysisd is running' <<<"$st" || fail "manager not running"
+if curl -fsS -m 60 -o /etc/filebeat/wazuh-template.json.new "https://raw.githubusercontent.com/wazuh/wazuh/v$ver/extensions/elasticsearch/7.x/wazuh-template.json"; then
+  mv /etc/filebeat/wazuh-template.json.new /etc/filebeat/wazuh-template.json; chmod go+r /etc/filebeat/wazuh-template.json
+  filebeat setup --index-management -E output.elasticsearch.ssl.verification_mode=none >/dev/null 2>&1 || note "wazuh: filebeat template load failed (alerts still flow with the old template)"
+fi
+systemctl start filebeat
+filebeat test output >/dev/null 2>&1 || fail "filebeat cannot reach the indexer"
+
+# --- dashboard
+[ "$(v wazuh-dashboard)" != "$cand" ] && { "${APT[@]}" wazuh-dashboard="$cand" >/dev/null || fail "dashboard package"; }
+systemctl daemon-reload; systemctl restart wazuh-dashboard
+for _ in $(seq 36); do sleep 5; c=$(curl -sk -o /dev/null -w '%{http_code}' -m 5 https://127.0.0.1/); [[ "$c" =~ ^(200|302)$ ]] && break; done
+[[ "${c:-}" =~ ^(200|302)$ ]] || fail "dashboard not answering (http ${c:-none})"
+
+note "wazuh stack auto-update OK: $cur -> $cand (indexer, manager, filebeat template, dashboard)"
+agents_upgrade

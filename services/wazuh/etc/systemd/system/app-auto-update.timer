@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly app auto-update (wazuh stack), Sunday 05:45 Denver
+
+[Timer]
+OnCalendar=Sun *-*-* 05:45:00 America/Denver
+Persistent=true
+
+[Install]
+WantedBy=timers.target
