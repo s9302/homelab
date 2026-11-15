@@ -1,0 +1,2 @@
+# One hostname per line. Reload with: systemctl reload squid
+<your-modal-endpoint>.modal.run

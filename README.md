@@ -12,6 +12,9 @@ Secrets are not in here. Anything that was a password, token, client secret or w
 | `cluster/` | `/etc/pve`: guest configs, backup jobs (`jobs.cfg`), storage, SDN vnets (`lab`, `llm`), Authentik realm, notifications |
 | `nodes/<node>/` | Per-node files at their real paths: `node-auto-update` + timer, `wazuh-wait-tailscale`, iptables rules, `/etc/network/interfaces`, NFS exports, `llm-sandbox` (pve2), `lab-status` (pve3), `site-repo-snapshot` (proxmox) |
 | `services/<name>/` | Per-service files at their real paths: compose files, systemd units, Caddyfile, cloudflared configs, Forgejo `app.ini`, Pi-hole, Prometheus + Grafana alerting |
+| `services/authentik/blueprint/` | Authentik config exported with `ak export_blueprint`: 8 OIDC providers/apps, flows, stages, MFA policy, custom scope mappings, groups. Client secrets redacted; users, passkeys, recovery codes, tokens and certificate keys removed. |
+| `services/llm-router/` | VM 410: nftables, Squid + the `llm-allowed-hosts` allowlist, sysctl. This is what isolates the LLM sandbox. |
+| `services/nextcloud/` | The Alpine host: periodic jobs (cron, apk-upgrade, Tailscale cert renewal), syslog forward to Wazuh, nginx, fail2ban, firewall, sshd |
 | `authentik/` | `mkprov.sh` / `mkprov.py`, which create an OIDC provider + app in Authentik |
 | `wazuh/manager/` | Wazuh manager config at its real path: `ossec.conf`, custom rules (`local_rules.xml`), decoders, shared agent config |
 | `wazuh/scripts/` | Wazuh dashboard SSO setup and the Authentik login-alert rules/decoder |

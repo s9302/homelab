@@ -1,0 +1,21 @@
+#!/bin/sh
+# Daily OS and Nextcloud update. Repos are pinned to one Alpine release, so moving
+# to a new release stays a manual step. An apk upgrade of Nextcloud does not migrate its
+# database, so run occ upgrade afterward or Nextcloud stays stuck on its upgrade prompt.
+before=$(md5sum /lib/apk/db/installed)
+if ! apk update || ! apk upgrade; then
+    logger -t apk-upgrade "apk upgrade failed"
+    exit 1
+fi
+if occ status 2>/dev/null | grep -q 'needsDbUpgrade: true'; then
+    if occ upgrade; then
+        logger -t apk-upgrade "occ upgrade ok"
+    else
+        logger -t apk-upgrade "occ upgrade FAILED"
+    fi
+fi
+# apk does not restart services, so pick up new PHP and Nextcloud code
+if [ "$before" != "$(md5sum /lib/apk/db/installed)" ]; then
+    rc-service nextcloud restart
+    rc-service nginx reload
+fi

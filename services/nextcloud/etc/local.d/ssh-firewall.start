@@ -1,0 +1,40 @@
+#!/bin/sh
+# Tailnet-only inbound policy. Re-applied at boot because Tailscale's own
+# nftables rules can't round-trip through iptables-save on Alpine.
+#
+# Exceptions, all load-bearing:
+#   lo                  local services
+#   ESTABLISHED,RELATED replies to outbound connections
+#   udp 68              DHCP client - without it the lease dies, then internet,
+#                       then Tailscale itself. That would be a hard lockout.
+#   udp 41641           Tailscale direct connections (else DERP-relay only)
+add() {
+	iptables -C "$@" 2>/dev/null || iptables -A "$@"
+}
+ins() {
+	iptables -C INPUT "$@" 2>/dev/null || iptables -I INPUT "$@"
+}
+ins -i lo -j ACCEPT
+ins -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+ins -i tailscale0 -j ACCEPT
+ins -p udp --dport 68 -j ACCEPT
+ins -p udp --dport 41641 -j ACCEPT
+add INPUT ! -i tailscale0 -j DROP
+
+# Retire the old address-based rule if present.
+while iptables -C INPUT ! -s 100.64.0.0/10 -p tcp --dport 22 -j DROP 2>/dev/null; do
+	iptables -D INPUT ! -s 100.64.0.0/10 -p tcp --dport 22 -j DROP
+done
+
+# IPv6 mirror (2026-11-15): the v4 policy alone left 22/80/443 open to the
+# apartment LAN over IPv6 link-local.
+add6() {
+	ip6tables -C "$@" 2>/dev/null || ip6tables -A "$@"
+}
+add6 INPUT -i lo -j ACCEPT
+add6 INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+add6 INPUT -i tailscale0 -j ACCEPT
+for t in 133 134 135 136; do add6 INPUT -p ipv6-icmp --icmpv6-type $t -j ACCEPT; done
+add6 INPUT -p udp --dport 546 -j ACCEPT
+add6 INPUT -p udp --dport 41641 -j ACCEPT
+add6 INPUT ! -i tailscale0 -j DROP
