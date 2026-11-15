@@ -29,6 +29,7 @@
 		"xemu":        "<xemu-tailnet-ip>",
 		"langfuse":    "<langfuse-tailnet-ip>",
 		"auth":        "<auth-tailnet-ip>",
+		"cal":         "<cal-tailnet-ip>",
 
 		// Personal devices
 		"macbook":  "<macbook-tailnet-ip>",
@@ -84,6 +85,7 @@
 				"xemu",
 				"langfuse",
 				"auth",
+				"cal", // Planner (LXC 108): internet-facing via Cloudflare, Wazuh only
 			],
 			"dst": ["wazuh:1514,1515"],
 		},
@@ -294,6 +296,24 @@
 		{
 			"src":  "unknown-device",
 			"deny": ["vaultwarden:443", "vaultwarden:22", "proxmox:8006"],
+		},
+		{
+			// Planner is internet-facing and holds calendar tokens: Wazuh only.
+			"src":    "cal",
+			"accept": ["wazuh:1514", "wazuh:1515"],
+			"deny": [
+				"vaultwarden:22",
+				"vaultwarden:443",
+				"proxmox:22",
+				"proxmox:8006",
+				"pve3:22",
+				"pve3:8006",
+				"sandbox:22",
+				"auth:443",
+				"web:22",
+				"nextcloud:443",
+				"pihole:53",
+			],
 		},
 	],
 }
