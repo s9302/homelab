@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly Langfuse data retention, Sunday 06:00 Denver
+
+[Timer]
+OnCalendar=Sun *-*-* 06:00:00 America/Denver
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,7 @@
+[Unit]
+Description=Langfuse data retention (delete ClickHouse rows older than 180 days)
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/langfuse-retention

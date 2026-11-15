@@ -1,0 +1,22 @@
+#!/bin/bash
+# Weekly Langfuse data retention (homelab, 2026-11-15).
+# Langfuse's own retention cleaner is Enterprise-only (it returns early without a
+# license), so this does what it does: DELETE FROM the same ClickHouse tables on
+# the same timestamp columns, for rows older than RETENTION_DAYS.
+# Change the period here (default 180 days).
+set -uo pipefail
+RETENTION_DAYS=${RETENTION_DAYS:-180}
+cd /opt/langfuse || exit 1
+note() { /usr/local/sbin/homelab-notify "$*"; echo "$*"; }
+q() { docker compose exec -T clickhouse sh -c "clickhouse-client --user \"\$CLICKHOUSE_USER\" --password \"\$CLICKHOUSE_PASSWORD\" -q \"$1\""; }
+
+total=0; parts=()
+for tc in traces:timestamp observations:start_time scores:timestamp events_full:start_time events_core:start_time; do
+  t=${tc%%:*}; col=${tc#*:}
+  n=$(q "SELECT count() FROM $t WHERE $col < now() - INTERVAL $RETENTION_DAYS DAY") || { note "langfuse retention: count on $t FAILED"; exit 1; }
+  if [ "${n:-0}" -gt 0 ]; then
+    q "DELETE FROM $t WHERE $col < now() - INTERVAL $RETENTION_DAYS DAY" || { note "langfuse retention: DELETE on $t FAILED"; exit 1; }
+    total=$((total + n)); parts+=("$t=$n")
+  fi
+done
+if [ $total -gt 0 ]; then note "langfuse retention: removed $total rows older than $RETENTION_DAYS days (${parts[*]})"; else echo "langfuse retention: nothing older than $RETENTION_DAYS days"; fi
