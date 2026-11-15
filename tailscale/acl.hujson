@@ -153,6 +153,7 @@
 				"uptime",
 				"wazuh",
 				"git",
+				"pihole", // forward-auth check for the Pi-hole UI (2026-11-15)
 			],
 			"dst": ["auth:443"],
 		},
@@ -354,6 +355,12 @@
 			"src":    "uptime",
 			"accept": ["git:443"],
 			"deny":   ["git:22", "git:2222"],
+		},
+		{
+			// Pi-hole asks Authentik who is logged in, nothing else on auth.
+			"src":    "pihole",
+			"accept": ["auth:443", "wazuh:1514"],
+			"deny":   ["auth:22", "auth:9000", "vaultwarden:443", "proxmox:22"],
 		},
 		{
 			// Kuma may check the RomM UI, never get a shell there.

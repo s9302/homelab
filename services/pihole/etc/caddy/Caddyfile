@@ -1,0 +1,36 @@
+# Homelab (2026-11-15): Authentik forward auth in front of Pi-hole.
+# tailscale serve :443 -> this listener (127.0.0.1:8090) -> Pi-hole on 127.0.0.1:8080.
+# Pi-hole itself listens on localhost only, so the tailnet can't go around this.
+{
+	admin off
+	auto_https off
+	servers {
+		trusted_proxies static 127.0.0.1/32
+	}
+}
+
+http://:8090 {
+	bind 127.0.0.1
+	route {
+		# Outpost endpoints (login callback, sign-out) go to Authentik's embedded outpost.
+		# The app's own Host header is kept (the outpost picks the app by Host); TLS SNI
+		# stays auth.tailnet-name.ts.net so tailscale serve on auth accepts the connection.
+		reverse_proxy /outpost.goauthentik.io/* https://auth.tailnet-name.ts.net {
+			# HTTPS upstreams get Host rewritten to the upstream too; keep the app host
+			header_up Host {http.request.host}
+			transport http {
+				tls_server_name auth.tailnet-name.ts.net
+			}
+		}
+		forward_auth https://auth.tailnet-name.ts.net {
+			uri /outpost.goauthentik.io/auth/caddy
+			# forward_auth defaults Host to the upstream; the outpost needs the app host
+			header_up Host {http.request.host}
+			transport http {
+				tls_server_name auth.tailnet-name.ts.net
+			}
+			copy_headers X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid
+		}
+		reverse_proxy 127.0.0.1:8080
+	}
+}
